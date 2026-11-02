@@ -9,8 +9,8 @@ import kotlinx.coroutines.sync.withLock
 object Prefs {
     private fun s(k: String) = settingsGet(k)
     private fun s(k: String, v: String?) = settingsPut(k, v)
-    private fun b(k: String, def: Boolean) = settingsGet(k)?.toBooleanStrictOrNull() ?: def
-    private fun b(k: String, v: Boolean) = settingsPut(k, v.toString())
+    private fun bGet(k: String, def: Boolean) = settingsGet(k)?.toBooleanStrictOrNull() ?: def
+    private fun bSet(k: String, v: Boolean) = settingsPut(k, v.toString())
 
     var username: String?
         get() = s("username")
@@ -28,17 +28,17 @@ object Prefs {
         get() = s("reporter")
         set(v) = s("reporter", v)
     var continuous: Boolean
-        get() = b("continuous", true)
-        set(v) = b("continuous", v)
+        get() = bGet("continuous", true)
+        set(v) = bSet("continuous", v)
     var alarmNotifications: Boolean
-        get() = b("alarm_notif", true)
-        set(v) = b("alarm_notif", v)
+        get() = bGet("alarm_notif", true)
+        set(v) = bSet("alarm_notif", v)
     var lastAlarmSeen: String?
         get() = s("last_alarm")
         set(v) = s("last_alarm", v)
     var useGps: Boolean
-        get() = b("gps", true)
-        set(v) = b("gps", v)
+        get() = bGet("gps", true)
+        set(v) = bSet("gps", v)
 }
 
 /** Jedan zapis u lokalnoj istoriji (vezivanje, odvezivanje, prijava...). */
