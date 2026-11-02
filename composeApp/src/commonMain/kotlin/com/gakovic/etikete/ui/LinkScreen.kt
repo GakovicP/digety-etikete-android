@@ -84,8 +84,12 @@ fun LinkScreen() {
     suspend fun checkTag(id: String): Boolean {
         loadingTag = true; tagError = null; tagInfo = null
         try {
-            val t = Api.tag(id)
-            if (t == null) tagError = "Etiketa $id NE POSTOJI u Digety-ju." else tagInfo = t
+            // bez obzira na velika/mala slova; u polje upisi tacan ID iz Digety-ja
+            val t = Api.findTag(id)
+            if (t == null) tagError = "Etiketa $id NE POSTOJI u Digety-ju." else {
+                tagInfo = t
+                t.str("id")?.let { real -> if (tag.trim().equals(real, ignoreCase = true)) tag = real }
+            }
         } catch (e: ApiException) {
             tagError = if (e.notFound) "Etiketa $id NE POSTOJI u Digety-ju (nije registrovana na vaš nalog)." else e.message
         } catch (e: Exception) {
@@ -137,7 +141,7 @@ fun LinkScreen() {
         busy = true; result = null
         scope.launch {
             // 1) etiketa mora da postoji
-            if (tagInfo?.optString("id") != t && !checkTag(t)) {
+            if (tagInfo?.optString("id")?.equals(t, ignoreCase = true) != true && !checkTag(t)) {
                 result = false to (tagError ?: "Etiketa $t ne postoji.")
                 busy = false
                 return@launch
@@ -153,12 +157,13 @@ fun LinkScreen() {
             var msg = ""
             var mode = "barcode"
             var key = p
+            val realTag = tagInfo?.str("id") ?: t
             try {
                 val m = resolve(p)
                 mode = m.mode; key = m.key
-                Api.attach(t, key, mode)
+                Api.attach(realTag, key, mode)
                 ok = true
-                msg = "Povezano: $t → " + (m.name ?: p) + (if (m.via != "barkod") " (${m.via})" else "")
+                msg = "Povezano: $realTag → " + (m.name ?: p) + (if (m.via != "barkod") " (${m.via})" else "")
             } catch (e: ApiException) {
                 msg = when {
                     e.uncertain -> e.message ?: "Server nije odgovorio."
@@ -169,15 +174,15 @@ fun LinkScreen() {
             } catch (e: Exception) {
                 msg = e.message ?: "Greška"
             }
-            record("vezivanje", t, key, mode, ok, if (ok) null else msg)
-            session.add(0, SessionLink(t, if (key == p) p else "$p → $key", ok, msg))
+            record("vezivanje", realTag, key, mode, ok, if (ok) null else msg)
+            session.add(0, SessionLink(realTag, if (key == p) p else "$p → $key", ok, msg))
             if (session.size > 30) session.removeAt(session.size - 1)
             result = (if (ok) true else if (uncertain) null else false) to msg
             if (ok) buzz() else buzz(error = true)
             busy = false
             if (ok) {
                 // osvezi prikaz etikete
-                runCatching { tagInfo = Api.tag(t) }
+                runCatching { tagInfo = Api.tag(realTag) }
                 if (Prefs.continuous) {
                     tag = ""; product = ""; tagInfo = null; match = null
                     runCatching { tagFocus.requestFocus() }

@@ -242,7 +242,9 @@ private fun NewIssue(initialTag: String, onDone: () -> Unit) {
                                             "GPS: ${l.lat.fmt(6)}, ${l.lon.fmt(6)}" + (l.accuracy?.let { a -> " (±${a.fmt(0)} m)" } ?: "")
                                     }
                                     if (reporter.isNotBlank()) Prefs.reporterName = reporter
-                                    Api.createIssue(store, tag.trim(), category, text, reporter, key)
+                                    // tacan ID etikete (bez obzira na velika/mala slova)
+                                    val realTag = runCatching { Api.findTag(tag.trim())?.str("id") }.getOrNull() ?: tag.trim()
+                                    Api.createIssue(store, realTag, category, text, reporter, key)
                                     record("prijava", tag.trim(), null, null, true, categoryText(category))
                                     toast("Prijava poslata")
                                     onDone()

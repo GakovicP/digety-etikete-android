@@ -303,6 +303,21 @@ object Api {
 
     /** Vezivanje: mode = "barcode" ili "sku". */
     suspend fun attach(tagId: String, product: String, mode: String) {
+        // barkod/SKU sa slovima: ako ne prodje kako je uneto, probaj VELIKIM pa malim slovima
+        var last: ApiException? = null
+        for (p in caseVariants(product)) {
+            try {
+                attachExact(tagId, p, mode)
+                return
+            } catch (e: ApiException) {
+                if (!e.notFound) throw e
+                last = e
+            }
+        }
+        throw last ?: ApiException("Nije pronađeno.", notFound = true)
+    }
+
+    private suspend fun attachExact(tagId: String, product: String, mode: String) {
         val (field, arg) = if (mode == "sku") "attachBySkus" to "skus" else "attachByBarcodes" to "barcodes"
         val data = gql(
             "mutation(${'$'}t: [ID!], ${'$'}p: [String!]) { $field(tags: ${'$'}t, $arg: ${'$'}p) { id } }",
@@ -326,7 +341,7 @@ object Api {
         val skus = item.optJSONArray("skus")?.objects().orEmpty()
         if (skus.isEmpty()) return null
         // tacan SKU, pa SKU ciji barkod je unet, pa prvi
-        val sku = skus.firstOrNull { it.optString("sku") == q }
+        val sku = skus.firstOrNull { it.optString("sku").equals(q, ignoreCase = true) }
             ?: skus.firstOrNull { s -> s.optJSONArray("barcodes")?.let { a -> (0 until a.length()).any { a.optString(it) == q } } == true }
             ?: skus.first()
         val texts = sku.optJSONArray("texts")?.objects().orEmpty()
@@ -343,15 +358,34 @@ object Api {
      */
     suspend fun resolveProduct(q: String): ProductMatch {
         val v = q.trim()
-        runCatching {
-            gql("query(${'$'}s: String!) { itemBySku(sku: ${'$'}s) { $ITEM_FIELDS } }", JSONObject().put("s", v))
-                .optJSONObject("itemBySku")
-        }.getOrNull()?.let { item -> matchFromItem(v, item, "SKU")?.let { return it } }
-        runCatching {
-            gql("query(${'$'}id: ID!) { item(id: ${'$'}id) { $ITEM_FIELDS } }", JSONObject().put("id", v))
-                .optJSONObject("item")
-        }.getOrNull()?.let { item -> matchFromItem(v, item, "ID artikla")?.let { return it } }
+        // Digety razlikuje velika i mala slova - probaj kako je uneto, pa VELIKIM, pa malim slovima
+        for (x in caseVariants(v)) {
+            runCatching {
+                gql("query(${'$'}s: String!) { itemBySku(sku: ${'$'}s) { $ITEM_FIELDS } }", JSONObject().put("s", x))
+                    .optJSONObject("itemBySku")
+            }.getOrNull()?.let { item -> matchFromItem(x, item, "SKU")?.let { return it.copy(query = v) } }
+        }
+        for (x in caseVariants(v)) {
+            runCatching {
+                gql("query(${'$'}id: ID!) { item(id: ${'$'}id) { $ITEM_FIELDS } }", JSONObject().put("id", x))
+                    .optJSONObject("item")
+            }.getOrNull()?.let { item -> matchFromItem(x, item, "ID artikla")?.let { return it.copy(query = v) } }
+        }
         return ProductMatch(v, "barcode", v, null, null, "barkod")
+    }
+
+    /** Etiketa po ID-ju bez obzira na velika/mala slova; vraca tag sa tacnim ID-jem ili null. */
+    suspend fun findTag(q: String): JSONObject? {
+        var lastErr: ApiException? = null
+        for (x in caseVariants(q.trim())) {
+            try {
+                tag(x)?.let { return it }
+            } catch (e: ApiException) {
+                if (!e.notFound) throw e
+                lastErr = e
+            }
+        }
+        return null
     }
 
     suspend fun detach(tagId: String) {
@@ -374,12 +408,7 @@ object Api {
     }
 
     /** Postoji li tag u Digety-ju (za razlikovanje "tag ne postoji" od "proizvod ne postoji"). */
-    suspend fun tagExists(tagId: String): Boolean =
-        try {
-            tag(tagId) != null
-        } catch (e: ApiException) {
-            if (e.notFound) false else throw e
-        }
+    suspend fun tagExists(tagId: String): Boolean = findTag(tagId) != null
 
     // ------------------------------------------------------------------ alarmi
 
@@ -592,3 +621,6 @@ fun alarmTypeText(a: JSONObject): String = when {
     a.str("type") == "zone" -> "izlazak iz zone"
     else -> a.str("type") ?: "alarm"
 }
+
+/** Unos kako je otkucan, VELIKIM i malim slovima (bez duplikata). */
+fun caseVariants(v: String): List<String> = listOf(v, v.uppercase(), v.lowercase()).distinct()
