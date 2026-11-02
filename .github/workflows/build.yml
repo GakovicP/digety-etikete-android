@@ -72,6 +72,17 @@ jobs:
           mkdir -p shots
           xcrun simctl io "$DEV" screenshot shots/ios.png
           xcrun simctl spawn "$DEV" log show --last 2m --predicate 'process == "NetPlanetLink"' --style compact | tail -60 > shots/ios-log.txt || true
+      - name: Objavi snimke (Release test-screens)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls shots/ 2>/dev/null || exit 0
+          for f in shots/*; do mv "$f" "shots/ios-run${{ github.run_number }}-$(basename "$f")"; done
+          gh release view test-screens -R ${{ github.repository }} >/dev/null 2>&1 || \
+            gh release create test-screens -R ${{ github.repository }} --title "Test snimci ekrana" --notes "Automatski snimci ekrana iz testa pokretanja (simulator/emulator)." --prerelease
+          gh release upload test-screens shots/* -R ${{ github.repository }} --clobber
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -115,6 +126,17 @@ jobs:
             mkdir -p shots
             adb exec-out screencap -p > shots/android.png
             adb logcat -d -t 300 | grep -iE "etikete|AndroidRuntime|FATAL" > shots/android-log.txt || true
+      - name: Objavi snimke (Release test-screens)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls shots/ 2>/dev/null || exit 0
+          for f in shots/*; do mv "$f" "shots/android-run${{ github.run_number }}-$(basename "$f")"; done
+          gh release view test-screens -R ${{ github.repository }} >/dev/null 2>&1 || \
+            gh release create test-screens -R ${{ github.repository }} --title "Test snimci ekrana" --notes "Automatski snimci ekrana iz testa pokretanja (simulator/emulator)." --prerelease
+          gh release upload test-screens shots/* -R ${{ github.repository }} --clobber
       - uses: actions/upload-artifact@v4
         if: always()
         with:
