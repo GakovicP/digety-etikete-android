@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.Etikete" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#1E3A8A</item>
+        <item name="android:windowBackground">#F6F7F9</item>
+    </style>
+</resources>

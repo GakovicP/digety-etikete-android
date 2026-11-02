@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- etiketa -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M30,38 L78,38 Q82,38 82,42 L82,70 Q82,74 78,74 L30,74 Q26,74 26,70 L26,42 Q26,38 30,38 Z" />
+    <path android:fillColor="#1E3A8A" android:pathData="M33,46 L60,46 L60,51 L33,51 Z" />
+    <path android:fillColor="#1E3A8A" android:pathData="M33,55 L52,55 L52,59 L33,59 Z" />
+    <path android:fillColor="#F59E0B" android:pathData="M62,55 L76,55 L76,67 L62,67 Z" />
+    <!-- barkod -->
+    <path android:fillColor="#1E3A8A" android:pathData="M33,63 L34.5,63 L34.5,69 L33,69 Z M36,63 L38,63 L38,69 L36,69 Z M39.5,63 L40.5,63 L40.5,69 L39.5,69 Z M42,63 L44.5,63 L44.5,69 L42,69 Z M46,63 L47,63 L47,69 L46,69 Z M48.5,63 L50.5,63 L50.5,69 L48.5,69 Z" />
+</vector>
