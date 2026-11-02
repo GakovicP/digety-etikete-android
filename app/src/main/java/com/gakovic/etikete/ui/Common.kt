@@ -180,3 +180,13 @@ fun shareText(c: Context, fileName: String, content: String, mime: String = "tex
 }
 
 fun toast(c: Context, s: String) = Toast.makeText(c, s, Toast.LENGTH_SHORT).show()
+
+/** Kratka vibracija (greska = dva puta). */
+fun buzz(c: Context, error: Boolean = false) {
+    runCatching {
+        val v = c.getSystemService(android.os.Vibrator::class.java) ?: return
+        val effect = if (error) android.os.VibrationEffect.createWaveform(longArrayOf(0, 180, 120, 180), -1)
+        else android.os.VibrationEffect.createOneShot(60, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
+        v.vibrate(effect)
+    }
+}

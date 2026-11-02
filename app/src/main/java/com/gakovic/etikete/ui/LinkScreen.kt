@@ -70,7 +70,8 @@ fun LinkScreen() {
     val scope = rememberCoroutineScope()
     var tag by remember { mutableStateOf("") }
     var product by remember { mutableStateOf("") }
-    var mode by remember { mutableStateOf(Prefs.linkMode) }
+    var match by remember { mutableStateOf<Api.ProductMatch?>(null) }
+    var resolving by remember { mutableStateOf(false) }
     var tagInfo by remember { mutableStateOf<JSONObject?>(null) }
     var tagError by remember { mutableStateOf<String?>(null) }
     var loadingTag by remember { mutableStateOf(false) }
@@ -82,29 +83,45 @@ fun LinkScreen() {
     val tagFocus = remember { FocusRequester() }
     val productFocus = remember { FocusRequester() }
 
+    /** Proverava da li etiketa postoji u Digety-ju; puni tagInfo / tagError. */
+    suspend fun checkTag(id: String): Boolean {
+        loadingTag = true; tagError = null; tagInfo = null
+        try {
+            val t = Api.tag(id)
+            if (t == null) tagError = "Etiketa $id NE POSTOJI u Digety-ju." else tagInfo = t
+        } catch (e: ApiException) {
+            tagError = if (e.notFound) "Etiketa $id NE POSTOJI u Digety-ju (nije registrovana na vaš nalog)." else e.message
+        } catch (e: Exception) {
+            tagError = e.message
+        } finally {
+            loadingTag = false
+        }
+        if (tagInfo == null) buzz(c, error = true) else buzz(c)
+        return tagInfo != null
+    }
+
     fun loadTag(then: (() -> Unit)? = null) {
         val id = tag.trim()
         if (id.isEmpty()) return
-        loadingTag = true; tagError = null; tagInfo = null; result = null
-        scope.launch {
-            try {
-                val t = Api.tag(id)
-                if (t == null) tagError = "Etiketa $id ne postoji u Digety-ju." else tagInfo = t
-            } catch (e: ApiException) {
-                tagError = if (e.notFound) "Etiketa $id ne postoji u Digety-ju (nije registrovana na vaš nalog)." else e.message
-            } catch (e: Exception) {
-                tagError = e.message
-            } finally {
-                loadingTag = false
-            }
-            if (tagError == null) then?.invoke()
+        result = null
+        scope.launch { if (checkTag(id)) then?.invoke() }
+    }
+
+    suspend fun resolve(p: String): Api.ProductMatch {
+        match?.takeIf { it.query == p }?.let { return it }
+        resolving = true
+        try {
+            return Api.resolveProduct(p).also { match = it }
+        } finally {
+            resolving = false
         }
     }
 
     fun scanProduct() {
         scope.launch {
             val v = scan(c) ?: return@launch
-            product = v; usedCamera = true
+            product = v; usedCamera = true; match = null
+            runCatching { resolve(v) }
         }
     }
 
@@ -122,36 +139,50 @@ fun LinkScreen() {
         if (t.isEmpty() || p.isEmpty()) return
         busy = true; result = null
         scope.launch {
+            // 1) etiketa mora da postoji
+            if (tagInfo?.optString("id") != t && !checkTag(t)) {
+                result = false to (tagError ?: "Etiketa $t ne postoji.")
+                busy = false
+                return@launch
+            }
+            if (tagInfo == null) {
+                result = false to (tagError ?: "Etiketa $t ne postoji.")
+                busy = false
+                return@launch
+            }
+            // 2) proizvod: SKU -> ID artikla -> barkod
             var ok = false
             var uncertain = false
             var msg = ""
+            var mode = "barcode"
+            var key = p
             try {
-                Api.attach(t, p, mode)
+                val m = resolve(p)
+                mode = m.mode; key = m.key
+                Api.attach(t, key, mode)
                 ok = true
-                msg = "Povezano: $t → $p"
+                msg = "Povezano: $t → " + (m.name ?: p) + (if (m.via != "barkod") " (${m.via})" else "")
             } catch (e: ApiException) {
                 msg = when {
                     e.uncertain -> e.message ?: "Server nije odgovorio."
-                    e.notFound -> runCatching {
-                        if (Api.tagExists(t)) "Proizvod $p nije pronađen u Digety katalogu."
-                        else "Etiketa $t ne postoji u Digety-ju."
-                    }.getOrDefault(e.message ?: "Nije pronađeno.")
+                    e.notFound -> "Proizvod $p nije pronađen ni kao barkod, SKU ni ID artikla."
                     else -> e.message ?: "Greška"
                 }
                 uncertain = e.uncertain
             } catch (e: Exception) {
                 msg = e.message ?: "Greška"
             }
-            record(c, "vezivanje", t, p, mode, ok, if (ok) null else msg)
-            session.add(0, SessionLink(t, p, ok, msg))
+            record(c, "vezivanje", t, key, mode, ok, if (ok) null else msg)
+            session.add(0, SessionLink(t, if (key == p) p else "$p → $key", ok, msg))
             if (session.size > 30) session.removeAt(session.size - 1)
             result = (if (ok) true else if (uncertain) null else false) to msg
+            if (ok) buzz(c) else buzz(c, error = true)
             busy = false
             if (ok) {
                 // osvezi prikaz etikete
                 runCatching { tagInfo = Api.tag(t) }
                 if (Prefs.continuous) {
-                    tag = ""; product = ""; tagInfo = null
+                    tag = ""; product = ""; tagInfo = null; match = null
                     runCatching { tagFocus.requestFocus() }
                 }
             }
@@ -169,17 +200,29 @@ fun LinkScreen() {
                 onDone = { loadTag { runCatching { productFocus.requestFocus() } } },
                 focus = tagFocus,
             )
+            // status etikete odmah ispod polja
+            when {
+                loadingTag -> Text("Proveravam etiketu u Digety-ju…", color = Muted, fontSize = 13.sp)
+                tagError != null -> Message("✗ " + tagError!!, Err)
+                tagInfo != null -> Message(
+                    "✓ Etiketa postoji" + (tagInfo!!.tagProductName()?.let { " · trenutno: $it" } ?: " · nije vezana"),
+                    Ok
+                )
+            }
             ScanField(
-                label = if (mode == "barcode") "2. Barkod proizvoda" else "2. SKU / ID proizvoda", value = product,
-                onValue = { product = it },
+                label = "2. Proizvod (barkod, SKU ili ID)", value = product,
+                onValue = { product = it; if (match?.query != it.trim()) match = null },
                 onScanClick = { scanProduct() },
                 onDone = { link() },
                 focus = productFocus,
             )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Po:", color = Muted, fontSize = 13.sp)
-                FilterChip(mode == "barcode", { mode = "barcode"; Prefs.linkMode = "barcode" }, label = { Text("Barkod") })
-                FilterChip(mode == "sku", { mode = "sku"; Prefs.linkMode = "sku" }, label = { Text("SKU / ID") })
+            when {
+                resolving -> Text("Tražim proizvod…", color = Muted, fontSize = 13.sp)
+                match != null && match!!.mode == "sku" -> Message(
+                    "✓ " + (match!!.name ?: match!!.key) + " · SKU ${match!!.key}" +
+                        (match!!.price?.let { " · $it" } ?: "") + " (pronađen kao ${match!!.via})", Ok
+                )
+                match != null -> Text("Barkod ${match!!.key} - Digety ga proverava pri vezivanju.", color = Muted, fontSize = 13.sp)
             }
             Button(
                 onClick = { link() },
@@ -193,8 +236,6 @@ fun LinkScreen() {
             }
         }
 
-        if (loadingTag) Section { Loading("Proveravam etiketu…") }
-        tagError?.let { Section { Message(it, Err) } }
         tagInfo?.let { t ->
             TagCard(
                 t,

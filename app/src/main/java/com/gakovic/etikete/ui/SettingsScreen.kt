@@ -158,12 +158,6 @@ fun SettingsScreen() {
         Section("Rad") {
             OutlinedTextField(reporter, { reporter = it; Prefs.reporterName = it.ifBlank { null } },
                 label = { Text("Moje ime (za prijave i izveštaj)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Text("Proizvod se vezuje po:", fontSize = 14.sp)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(mode == "barcode", { mode = "barcode"; Prefs.linkMode = "barcode" }); Text("Barkod")
-                Spacer(Modifier.width(16.dp))
-                RadioButton(mode == "sku", { mode = "sku"; Prefs.linkMode = "sku" }); Text("SKU / ID")
-            }
             SwitchRow("Posle uspešnog vezivanja obriši polja za sledeću etiketu", continuous) {
                 continuous = it; Prefs.continuous = it
             }

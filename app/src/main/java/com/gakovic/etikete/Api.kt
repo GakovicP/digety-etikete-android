@@ -271,6 +271,46 @@ object Api {
         }
     }
 
+    /** Rezultat objedinjene pretrage proizvoda: cime se vezuje i sta je pronadjeno. */
+    data class ProductMatch(
+        val query: String, val mode: String, val key: String,
+        val name: String?, val price: String?, val via: String,
+    )
+
+    private const val ITEM_FIELDS = "id skus { sku barcodes size texts { type text } price { prices { type price currency } } }"
+
+    private fun matchFromItem(q: String, item: JSONObject, via: String): ProductMatch? {
+        val skus = item.optJSONArray("skus")?.objects().orEmpty()
+        if (skus.isEmpty()) return null
+        // tacan SKU, pa SKU ciji barkod je unet, pa prvi
+        val sku = skus.firstOrNull { it.optString("sku") == q }
+            ?: skus.firstOrNull { s -> s.optJSONArray("barcodes")?.let { a -> (0 until a.length()).any { a.optString(it) == q } } == true }
+            ?: skus.first()
+        val texts = sku.optJSONArray("texts")?.objects().orEmpty()
+        val name = texts.firstOrNull { it.optString("type") == "name" }?.str("text") ?: texts.firstOrNull()?.str("text")
+        val pr = sku.optJSONObject("price")?.optJSONArray("prices")?.objects()?.firstOrNull()
+        val price = pr?.let { "%.2f %s".format(it.optDouble("price"), it.optString("currency", "")) }
+        val size = sku.str("size")?.let { " ($it)" } ?: ""
+        return ProductMatch(q, "sku", sku.optString("sku"), name?.plus(size), price, via)
+    }
+
+    /**
+     * Jedno polje za proizvod: probaj kao SKU, pa kao ID artikla; ako nista, tretiraj kao barkod
+     * (Digety nema pretragu po barkodu - barkod se proverava pri vezivanju).
+     */
+    suspend fun resolveProduct(q: String): ProductMatch {
+        val v = q.trim()
+        runCatching {
+            gql("query(${'$'}s: String!) { itemBySku(sku: ${'$'}s) { $ITEM_FIELDS } }", JSONObject().put("s", v))
+                .optJSONObject("itemBySku")
+        }.getOrNull()?.let { item -> matchFromItem(v, item, "SKU")?.let { return it } }
+        runCatching {
+            gql("query(${'$'}id: ID!) { item(id: ${'$'}id) { $ITEM_FIELDS } }", JSONObject().put("id", v))
+                .optJSONObject("item")
+        }.getOrNull()?.let { item -> matchFromItem(v, item, "ID artikla")?.let { return it } }
+        return ProductMatch(v, "barcode", v, null, null, "barkod")
+    }
+
     suspend fun detach(tagId: String) {
         gql(
             "mutation(${'$'}t: [ID!]) { detach(tags: ${'$'}t) { id } }",
