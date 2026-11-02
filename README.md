@@ -1,26 +1,40 @@
-# NetPlanet link — Android aplikacija za Digety etikete
+# NetPlanet link — Android + iOS aplikacija za Digety etikete
 
-Vezivanje etiketa za proizvode skeniranjem, mapa etiketa u prodavnici, GPS akcija, alarmi, prijave problema i izveštaji.
+Vezivanje etiketa za proizvode skeniranjem, alarmi, prijave problema i izveštaji.
 Radi direktno sa **Digety System API** (isti nalog kao Digety web dashboard).
 
-## Instalacija
-1. Otvori **Releases** (desno na stranici repozitorijuma) → najnovija verzija → preuzmi `NetPlanet-link-1.0.X.apk`.
-2. Na telefonu otvori fajl i dozvoli „instalaciju iz nepoznatih izvora“ za browser / fajl menadžer.
-3. Nove verzije se instaliraju preko stare (isti potpis), podaci ostaju.
+**Jedan kod za obe platforme:** Kotlin Multiplatform + Compose Multiplatform.
 
-Svaki `push` na `main` automatski pravi novu verziju (GitHub Actions → *Build APK*).
+## Struktura
 
-## Ekrani
-| Ekran | Šta radi |
+| Folder | Šta je unutra |
 |---|---|
-| **Veži** | Skeniraj etiketu → vidi šta je trenutno na njoj (slika, proizvod, cena, baterija) → skeniraj barkod proizvoda → *Poveži*. Neprekidni režim: posle uspeha odmah skenira sledeću. LED treptanje, odvezivanje, prijava. Radi i sa ručnim skenerima (Zebra, iData…) koji kucaju kod + Enter. |
-| **Mapa → Prodavnica** | Mapa sprata iz Digety-ja sa zonama, pozicija izabrane etikete (osvežava se na 5 s), sve etikete (na 15 s), mesto alarma. Radi samo u prodavnicama sa BlueIoT lokalizacijom. |
-| **Mapa → GPS** | OpenStreetMap sa GPS tačkama svih akcija sa telefona (ko je, kad i gde vezivao/prijavljivao). |
-| **Alarmi** | Digety alarmi prodavnice (geofence, tamper, nestale etikete), osvežavanje na 30 s, notifikacija na telefonu za nove alarme (provera na 15 min i u pozadini). |
-| **Prijave** | Digety „issues“: nova prijava sa kategorijom, fotografijom i GPS-om; lista sa dijagnostikom etikete, komentari, rešavanje. |
-| **Izveštaj** | Vezivanje sa telefona (po danu, radniku, greške, CSV), etikete sa slabom baterijom, offline etikete (CSV). |
+| `composeApp/src/commonMain` | **Zajednički kod (~90%)**: svi ekrani, Digety API (Ktor), prijava, istorija, izveštaji |
+| `composeApp/src/androidMain` | Android: skener (Google code scanner), GPS, kamera, deljenje, alarmi u pozadini (WorkManager) |
+| `composeApp/src/iosMain` | iOS: most prema Swift kodu, podešavanja, fajlovi |
+| `iosApp/` | iOS aplikacija (Swift): skener (AVFoundation), GPS (CoreLocation), kamera, deljenje; projekat se pravi iz `project.yml` (XcodeGen) |
+
+Izmena u `commonMain` važi odmah za obe aplikacije.
+
+## Build
+Svaki `push` na `main` pokreće GitHub Actions (*Build Android + iOS*) i pravi **Release** sa:
+- `NetPlanet-link-1.1.X.apk` — Android, instalira se direktno na telefon (preko stare verzije, podaci ostaju);
+- `NetPlanet-link-1.1.X-iOS-simulator.zip` — iOS za simulator.
+
+## Testiranje iOS verzije
+
+**Bez Apple naloga (odmah):**
+- **Appetize.io** — otvori nalog, *Upload* → izaberi `...-iOS-simulator.zip` → aplikacija radi u browseru kao iPhone. Kamera/GPS su simulirani (barkod se može ukucati ručno).
+- **Mac sa Xcode-om** — raspakuj zip, pokreni simulator i prevuci `NetPlanetLink.app` na njega.
+
+**Na pravom iPhone-u (potreban Apple Developer nalog, 99 USD/god.):**
+TestFlight — build se potpisuje i šalje u App Store Connect, testeri dobiju pozivnicu i instaliraju preko TestFlight aplikacije. Za to u repo treba dodati sertifikat i API ključ kao GitHub Secrets (posle otvaranja naloga).
+
+## Lokalni razvoj
+- Android: otvori folder u Android Studiju, pokreni `composeApp`.
+- iOS (Mac): `./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64`, pa `cd iosApp && xcodegen generate` i otvori `iosApp.xcodeproj` (postavi `KMP_FRAMEWORK_DIR` na `composeApp/build/bin/iosSimulatorArm64/debugFramework`).
 
 ## Napomene
 - Prijava: Cognito `USER_PASSWORD_AUTH`, čuva se samo refresh token (lozinka se ne pamti).
-- Izveštaj o vezivanju se čuva lokalno na telefonu (fajl `istorija.json`); CSV se deli preko Android menija.
-- Pozicije na mapi: Digety ne dokumentuje kako se povezati na `liveLocations` pretplatu, pa aplikacija periodično čita `latest_location`.
+- Izveštaj „Sa telefona“ se čuva lokalno (`istorija.json`), sa GPS koordinatama u CSV-u.
+- Alarmi: na Androidu provera i u pozadini (na 15 min) sa notifikacijom; na iOS-u dok je aplikacija otvorena.
