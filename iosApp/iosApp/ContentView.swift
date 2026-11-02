@@ -12,7 +12,8 @@ struct ComposeView: UIViewControllerRepresentable {
 
 struct ContentView: View {
     var body: some View {
+        // Compose sam vodi racuna o statusnoj liniji i donjoj ivici (traka se boji do vrha ekrana)
         ComposeView()
-            .ignoresSafeArea(.keyboard)
+            .ignoresSafeArea()
     }
 }

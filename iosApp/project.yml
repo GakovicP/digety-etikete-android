@@ -23,6 +23,8 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         CADisableMinimumFrameDurationOnPhone: true
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UIViewControllerBasedStatusBarAppearance: false
         NSCameraUsageDescription: "Kamera se koristi za skeniranje etiketa i proizvoda i za fotografije prijava."
         NSLocationWhenInUseUsageDescription: "Lokacija se beleži uz svako vezivanje i prijavu, za izveštaj."
         NSPhotoLibraryUsageDescription: "Izbor fotografije za prijavu problema."

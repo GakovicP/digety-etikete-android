@@ -131,7 +131,7 @@ fun Root() {
             )
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = Color.White) {
                 Tab.entries.filter { it != Tab.SETTINGS }.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t,
