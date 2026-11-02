@@ -126,6 +126,8 @@ private fun parseMaps(store: JSONObject): List<MapInfo> =
         MapInfo(st.optString("name", "Sprat"), m.str("image_url"), m.str("floor"), llx, lly, urx, ury, zones)
     }
 
+private data class Pos(val id: String, val x: Double, val y: Double, val floor: String?, val age: Int, val online: Boolean)
+
 @Composable
 private fun StoreMap() {
     val c = LocalContext.current
@@ -134,8 +136,11 @@ private fun StoreMap() {
     var maps by remember { mutableStateOf<List<MapInfo>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var sel by remember { mutableIntStateOf(0) }
-    var showAll by remember { mutableStateOf(false) }
-    var allPts by remember { mutableStateOf<List<Pt>>(emptyList()) }
+    var positions by remember { mutableStateOf<List<Pos>>(emptyList()) }
+    var tagCount by remember { mutableIntStateOf(0) }
+    var trails by remember { mutableStateOf<Map<String, List<Pos>>>(emptyMap()) }
+    var tripInfo by remember { mutableStateOf<String?>(null) }
+    var showStale by remember { mutableStateOf(true) }
     var focusId by remember { mutableStateOf(Nav.mapFocusTag) }
     var focusPt by remember { mutableStateOf<Pt?>(null) }
     var focusInfo by remember { mutableStateOf<String?>(null) }
@@ -156,21 +161,46 @@ private fun StoreMap() {
             error = e.message; maps = emptyList()
         }
     }
-    // sve etikete - osvezavanje na 15 s
-    LaunchedEffect(showAll, store) {
-        while (showAll) {
+    // poslednje pozicije svih etiketa - stalno, na 10 s
+    LaunchedEffect(store) {
+        while (true) {
             try {
-                allPts = Api.tagPositions(store).mapNotNull { t ->
+                val tags = Api.tagPositions(store)
+                tagCount = tags.size
+                positions = tags.mapNotNull { t ->
                     val l = t.optJSONObject("location")?.optJSONObject("latest_location") ?: return@mapNotNull null
-                    Pt(t.optString("id"), l.optDouble("x"), l.optDouble("y"), t.optBoolean("online"))
+                    if (l.isNull("x") || l.isNull("y")) return@mapNotNull null
+                    Pos(t.optString("id"), l.optDouble("x"), l.optDouble("y"), l.str("floor"), l.optInt("age_seconds", 99999), t.optBoolean("online"))
                 }
+                error = null
             } catch (e: Exception) {
-                error = e.message
+                error = "Pozicije: ${e.message}"
             }
-            delay(15_000)
+            delay(10_000)
         }
     }
-    // izabrana etiketa - osvezavanje na 5 s
+    // kretanja u poslednjih 5 min - stalno, na 5 s
+    LaunchedEffect(store) {
+        while (true) {
+            try {
+                val trips = Api.recentTrips(store, 5)
+                val byTag = mutableMapOf<String, MutableList<Pos>>()
+                trips.forEach { tr ->
+                    val id = tr.optString("tag_id")
+                    tr.optJSONArray("trip")?.objects().orEmpty().forEach { p ->
+                        if (!p.isNull("x") && !p.isNull("y")) byTag.getOrPut(id) { mutableListOf() }
+                            .add(Pos(id, p.optDouble("x"), p.optDouble("y"), p.str("floor") ?: tr.str("map"), 0, true))
+                    }
+                }
+                trails = byTag.mapValues { it.value.takeLast(30) }
+                tripInfo = null
+            } catch (e: Exception) {
+                tripInfo = "Kretanja: ${e.message?.take(120)}"
+            }
+            delay(5_000)
+        }
+    }
+    // izabrana etiketa - na 5 s
     LaunchedEffect(focusId) {
         val id = focusId ?: return@LaunchedEffect
         while (true) {
@@ -200,7 +230,6 @@ private fun StoreMap() {
                 onDone = {
                     val q = search.trim()
                     if (q.isNotEmpty()) scope.launch {
-                        // tag ID ili SKU
                         val byTag = runCatching { Api.tag(q) }.getOrNull()
                         if (byTag != null) focusId = q else {
                             val tags = runCatching { Api.tagsBySku(q, store) }.getOrDefault(emptyList())
@@ -210,10 +239,6 @@ private fun StoreMap() {
                     }
                 }
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Prikaži sve etikete (osvežava se na 15 s)", fontSize = 14.sp, modifier = Modifier.weight(1f))
-                Switch(showAll, { showAll = it })
-            }
             focusInfo?.let { Message(it, if (focusPt != null) BlueLight else Warn) }
             if (focusId != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
@@ -231,9 +256,9 @@ private fun StoreMap() {
         val list = maps
         when {
             list == null -> Loading("Učitavam mapu prodavnice…")
-            list.isEmpty() -> Section {
+            list.isEmpty() && positions.isEmpty() && trails.isEmpty() -> Section {
                 Message(
-                    "Za ovu prodavnicu nema mape u Digety-ju. Mapa i pozicije etiketa rade samo u prodavnicama " +
+                    "Za ovu prodavnicu nema mape ni pozicija u Digety-ju. Pozicije etiketa rade samo u prodavnicama " +
                         "sa BlueIoT sidrima (lokalizacijom).", Warn
                 )
             }
@@ -241,8 +266,27 @@ private fun StoreMap() {
                 if (list.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     list.forEachIndexed { i, m -> FilterChip(sel == i, { sel = i }, label = { Text(m.storyName) }) }
                 }
-                val m = list[sel.coerceIn(0, list.size - 1)]
-                val w = m.urx - m.llx; val h = m.ury - m.lly
+                val base = list.getOrNull(sel.coerceIn(0, (list.size - 1).coerceAtLeast(0)))
+                // tacke za ovaj sprat (ako sprat nije poznat, prikazi sve)
+                fun onFloor(f: String?) = base?.floor == null || f == null || f == base.floor || list.size <= 1
+                val pos = positions.filter { onFloor(it.floor) && (showStale || it.age <= 300) }
+                val moving = trails.filterValues { pts -> pts.isNotEmpty() && onFloor(pts.last().floor) }
+                val allPts = pos.map { it.x to it.y } + moving.values.flatten().map { it.x to it.y }
+
+                // granice prikaza: mapa; ako je vecina tacaka van mape - prosiri na tacke
+                var llx = base?.llx ?: 0.0; var lly = base?.lly ?: 0.0; var urx = base?.urx ?: 1.0; var ury = base?.ury ?: 1.0
+                val inside = allPts.count { (x, y) -> x in llx..urx && y in lly..ury }
+                val expanded = allPts.isNotEmpty() && (base == null || inside < allPts.size / 2)
+                if (expanded) {
+                    llx = minOf(if (base != null) llx else Double.MAX_VALUE, allPts.minOf { it.first })
+                    urx = maxOf(if (base != null) urx else -Double.MAX_VALUE, allPts.maxOf { it.first })
+                    lly = minOf(if (base != null) lly else Double.MAX_VALUE, allPts.minOf { it.second })
+                    ury = maxOf(if (base != null) ury else -Double.MAX_VALUE, allPts.maxOf { it.second })
+                    val px = (urx - llx).coerceAtLeast(100.0) * 0.05; val py = (ury - lly).coerceAtLeast(100.0) * 0.05
+                    llx -= px; urx += px; lly -= py; ury += py
+                }
+                val w = (urx - llx).coerceAtLeast(1.0); val h = (ury - lly).coerceAtLeast(1.0)
+
                 Box(
                     Modifier.fillMaxWidth().padding(12.dp)
                         .aspectRatio((w / h).toFloat().coerceIn(0.3f, 4f))
@@ -252,18 +296,18 @@ private fun StoreMap() {
                         .transformable(tstate)
                 ) {
                     Box(Modifier.fillMaxSize().graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y)) {
-                        if (m.imageUrl != null) AsyncImage(m.imageUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+                        base?.imageUrl?.let { url -> if (!expanded) AsyncImage(url, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds) }
                         Canvas(Modifier.fillMaxSize()) {
-                            fun px(x: Double) = ((x - m.llx) / w * size.width).toFloat()
-                            fun py(y: Double) = ((1 - (y - m.lly) / h) * size.height).toFloat()
-                            val label = Paint().apply { textSize = 26f / scale.coerceAtLeast(1f) * 1.2f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
-                            m.zones.forEach { z ->
+                            fun px(x: Double) = ((x - llx) / w * size.width).toFloat()
+                            fun py(y: Double) = ((1 - (y - lly) / h) * size.height).toFloat()
+                            val label = Paint().apply { textSize = 30f / scale.coerceAtLeast(1f); typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
+                            base?.zones?.forEach { z ->
                                 val col = when (z.type) { "alarm" -> Err; "department" -> BlueLight; else -> Muted }
                                 z.polygons.forEach { ring ->
                                     val path = Path()
                                     ring.forEachIndexed { i, (x, y) -> if (i == 0) path.moveTo(px(x), py(y)) else path.lineTo(px(x), py(y)) }
                                     path.close()
-                                    drawPath(path, col.copy(alpha = 0.10f))
+                                    drawPath(path, col.copy(alpha = 0.08f))
                                     drawPath(path, col, style = Stroke(width = 2f / scale))
                                     val cx = ring.map { px(it.first) }.average().toFloat()
                                     val cy = ring.map { py(it.second) }.average().toFloat()
@@ -271,8 +315,19 @@ private fun StoreMap() {
                                     drawContext.canvas.nativeCanvas.drawText(z.name, cx - label.measureText(z.name) / 2, cy, label)
                                 }
                             }
-                            if (showAll) allPts.forEach { p ->
-                                drawCircle(if (p.online) BlueLight else Muted, radius = 5f / scale, center = Offset(px(p.x), py(p.y)))
+                            // sve etikete: plavo = sveza pozicija (do 5 min), sivo = starija
+                            pos.forEach { p ->
+                                val fresh = p.age <= 300
+                                drawCircle(if (fresh) BlueLight else Muted.copy(alpha = 0.6f), radius = (if (fresh) 6f else 4f) / scale, center = Offset(px(p.x), py(p.y)))
+                            }
+                            // etikete u pokretu: zelena putanja + tacka
+                            moving.values.forEach { pts ->
+                                for (i in 1 until pts.size) {
+                                    drawLine(Ok.copy(alpha = 0.5f), Offset(px(pts[i - 1].x), py(pts[i - 1].y)), Offset(px(pts[i].x), py(pts[i].y)), strokeWidth = 3f / scale)
+                                }
+                                val last = pts.last()
+                                drawCircle(Ok.copy(alpha = 0.25f), radius = 18f / scale, center = Offset(px(last.x), py(last.y)))
+                                drawCircle(Ok, radius = 8f / scale, center = Offset(px(last.x), py(last.y)))
                             }
                             alarmPt?.let { (x, y) ->
                                 drawCircle(Warn.copy(alpha = 0.3f), radius = 30f / scale, center = Offset(px(x), py(y)))
@@ -285,11 +340,26 @@ private fun StoreMap() {
                         }
                     }
                 }
-                Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Zumiraj sa dva prsta", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                    OutlinedButton(onClick = { scale = 1f; offset = Offset.Zero }) { Text("Resetuj zum") }
+                Column(Modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("● u pokretu  ", color = Ok, fontSize = 12.sp)
+                        Text("● sveža poz.  ", color = BlueLight, fontSize = 12.sp)
+                        Text("● starija poz.", color = Muted, fontSize = 12.sp)
+                        Spacer(Modifier.weight(1f))
+                        OutlinedButton(onClick = { scale = 1f; offset = Offset.Zero }) { Text("Resetuj zum") }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Prikaži i starije pozicije", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Switch(showStale, { showStale = it })
+                    }
+                    Text(
+                        "Digety: $tagCount etiketa · ${positions.size} sa pozicijom · ${positions.count { it.age <= 300 }} svežih · " +
+                            "${trails.size} u pokretu (5 min)" + (if (expanded) " · pozicije su van granica plana - prikaz proširen" else ""),
+                        color = Muted, fontSize = 11.sp
+                    )
+                    tripInfo?.let { Text(it, color = Warn, fontSize = 11.sp) }
+                    Text("Osvežava se automatski: kretanja na 5 s, sve pozicije na 10 s.", color = Muted, fontSize = 11.sp)
                 }
-                if (showAll) Text("Etiketa sa pozicijom: ${allPts.size}", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 12.dp))
                 Spacer(Modifier.padding(8.dp))
             }
         }

@@ -229,13 +229,50 @@ object Api {
         return arr.objects()
     }
 
-    /** Samo pozicije svih etiketa prodavnice (za mapu). */
+    /** Poslednje pozicije svih etiketa prodavnice (za mapu). Delimicne greske se ignorisu. */
     suspend fun tagPositions(store: String): List<JSONObject> {
         val arr = gql(
-            "query(${'$'}store: String) { tags(store: ${'$'}store) { id online location { latest_location { x y floor age_seconds } } } }",
-            JSONObject().put("store", store)
+            "query(${'$'}store: String) { tags(store: ${'$'}store) { id online kind location { latest_location { x y floor age_seconds source } } } }",
+            JSONObject().put("store", store), allowPartial = true
         ).optJSONArray("tags") ?: JSONArray()
         return arr.objects()
+    }
+
+    /** Format datuma koji je Digety prihvatio za putanje (pamti se posle prvog uspeha). */
+    @Volatile private var tripDateFormat: String? = null
+
+    /**
+     * Kretanja (putanje) etiketa na mapama prodavnice u poslednjih [minutes] minuta.
+     * Vraca listu putanja: { tag_id, trip: [ {x y floor timestamp} ] } za sve mape.
+     */
+    suspend fun recentTrips(store: String, minutes: Int): List<JSONObject> {
+        val now = System.currentTimeMillis()
+        val formats = listOfNotNull(tripDateFormat) + listOf("yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd HH:mm:ss", "epoch")
+        var lastErr: Exception? = null
+        for (fmt in formats.distinct()) {
+            fun d(t: Long): String = if (fmt == "epoch") (t / 1000).toString() else
+                java.text.SimpleDateFormat(fmt, java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date(t))
+            try {
+                val st = gql(
+                    """query(${'$'}id: ID!, ${'$'}s: String!, ${'$'}e: String!) { store(id: ${'$'}id) {
+                        stories { map { id trips(start_date: ${'$'}s, end_date: ${'$'}e, limit: 1000) { tag_id map trip { x y floor timestamp } } } }
+                    } }""",
+                    JSONObject().put("id", store).put("s", d(now - minutes * 60_000L)).put("e", d(now + 60_000L)),
+                    allowPartial = true
+                ).optJSONObject("store")
+                val trips = st?.optJSONArray("stories")?.objects().orEmpty().flatMap { story ->
+                    story.optJSONObject("map")?.optJSONArray("trips")?.objects().orEmpty()
+                }
+                if (trips.isNotEmpty() || lastPartialErrors == null) {
+                    tripDateFormat = fmt
+                    return trips
+                }
+                lastErr = ApiException(lastPartialErrors ?: "")
+            } catch (e: Exception) {
+                lastErr = e
+            }
+        }
+        throw lastErr ?: ApiException("Kretanja nisu dostupna.")
     }
 
     /** Status svih etiketa prodavnice (za izvestaj offline). */

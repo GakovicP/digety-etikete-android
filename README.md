@@ -1,10 +1,10 @@
-# Etikete — Android aplikacija za Digety etikete
+# NetPlanet link — Android aplikacija za Digety etikete
 
 Vezivanje etiketa za proizvode skeniranjem, mapa etiketa u prodavnici, GPS akcija, alarmi, prijave problema i izveštaji.
 Radi direktno sa **Digety System API** (isti nalog kao Digety web dashboard).
 
 ## Instalacija
-1. Otvori **Releases** (desno na stranici repozitorijuma) → najnovija verzija → preuzmi `Etikete-1.0.X.apk`.
+1. Otvori **Releases** (desno na stranici repozitorijuma) → najnovija verzija → preuzmi `NetPlanet-link-1.0.X.apk`.
 2. Na telefonu otvori fajl i dozvoli „instalaciju iz nepoznatih izvora“ za browser / fajl menadžer.
 3. Nove verzije se instaliraju preko stare (isti potpis), podaci ostaju.
 

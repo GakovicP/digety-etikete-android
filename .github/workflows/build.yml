@@ -29,18 +29,18 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/release/app-release.apk out/Etikete-1.0.${{ github.run_number }}.apk
+          cp app/build/outputs/apk/release/app-release.apk out/NetPlanet-link-1.0.${{ github.run_number }}.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Etikete-APK
+          name: NetPlanet-link-APK
           path: out/*.apk
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: Etikete 1.0.${{ github.run_number }}
+          name: NetPlanet link 1.0.${{ github.run_number }}
           body: "Automatski build iz commit-a ${{ github.sha }}. Preuzmi .apk ispod i instaliraj na telefon."
           files: out/*.apk
           make_latest: true
