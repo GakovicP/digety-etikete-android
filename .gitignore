@@ -5,3 +5,8 @@ local.properties
 *.iml
 captures/
 .DS_Store
+iosApp/build/
+iosApp/*.xcodeproj/
+iosApp/iosApp/Info.plist
+xcuserdata/
+.kotlin/

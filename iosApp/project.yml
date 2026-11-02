@@ -1,0 +1,39 @@
+name: iosApp
+options:
+  bundleIdPrefix: com.gakovic
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    MARKETING_VERSION: "1.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  iosApp:
+    type: application
+    platform: iOS
+    scheme: {}
+    sources:
+      - iosApp
+    info:
+      path: iosApp/Info.plist
+      properties:
+        CFBundleDisplayName: NetPlanet link
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        CADisableMinimumFrameDurationOnPhone: true
+        NSCameraUsageDescription: "Kamera se koristi za skeniranje etiketa i proizvoda i za fotografije prijava."
+        NSLocationWhenInUseUsageDescription: "Lokacija se beleži uz svako vezivanje i prijavu, za izveštaj."
+        NSPhotoLibraryUsageDescription: "Izbor fotografije za prijavu problema."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gakovic.etikete
+        PRODUCT_NAME: NetPlanetLink
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Kotlin framework (ComposeApp) - putanju zadaje build skripta / CI preko KMP_FRAMEWORK_DIR
+        FRAMEWORK_SEARCH_PATHS: ["$(inherited)", "$(KMP_FRAMEWORK_DIR)"]
+        OTHER_LDFLAGS: ["$(inherited)", "-framework", "ComposeApp"]
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"

@@ -1,4 +1,4 @@
-name: Build APK
+name: Build Android + iOS
 
 on:
   push:
@@ -9,38 +9,81 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  android:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-
-      - name: Build
-        run: gradle assembleRelease --no-daemon --stacktrace
-
+      - name: Build APK
+        run: gradle :composeApp:assembleRelease --no-daemon --stacktrace
       - name: Rename APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/release/app-release.apk out/NetPlanet-link-1.0.${{ github.run_number }}.apk
-
+          cp composeApp/build/outputs/apk/release/composeApp-release.apk out/NetPlanet-link-1.1.${{ github.run_number }}.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: NetPlanet-link-APK
+          name: android-apk
           path: out/*.apk
 
+  ios:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Kotlin framework (iOS simulator)
+        run: gradle :composeApp:linkDebugFrameworkIosSimulatorArm64 --no-daemon --stacktrace
+      - name: Xcode projekat
+        run: |
+          brew install xcodegen
+          cd iosApp && xcodegen generate
+      - name: Build iOS (simulator)
+        run: |
+          cd iosApp
+          xcodebuild -project iosApp.xcodeproj -scheme iosApp -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
+            KMP_FRAMEWORK_DIR="$GITHUB_WORKSPACE/composeApp/build/bin/iosSimulatorArm64/debugFramework" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} MARKETING_VERSION=1.1.${{ github.run_number }} \
+            build | tail -200
+          test -d build/Build/Products/Debug-iphonesimulator/NetPlanetLink.app
+      - name: Zip .app
+        run: |
+          mkdir -p out
+          cd iosApp/build/Build/Products/Debug-iphonesimulator
+          zip -qr "$GITHUB_WORKSPACE/out/NetPlanet-link-1.1.${{ github.run_number }}-iOS-simulator.zip" NetPlanetLink.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-app
+          path: out/*.zip
+
+  release:
+    needs: [android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: NetPlanet link 1.0.${{ github.run_number }}
-          body: "Automatski build iz commit-a ${{ github.sha }}. Preuzmi .apk ispod i instaliraj na telefon."
-          files: out/*.apk
+          tag_name: v1.1.${{ github.run_number }}
+          name: NetPlanet link 1.1.${{ github.run_number }}
+          body: |
+            Automatski build iz commit-a ${{ github.sha }}.
+            - **Android:** preuzmi .apk i instaliraj na telefon.
+            - **iOS (simulator):** .zip sa NetPlanetLink.app - za iPhone simulator na Mac-u ili za testiranje u browseru (Appetize.io). Za pravi iPhone treba Apple Developer nalog (TestFlight).
+          files: out/*
           make_latest: true
