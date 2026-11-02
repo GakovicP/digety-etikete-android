@@ -112,7 +112,8 @@ fun LinkScreen() {
         scope.launch {
             val v = scan(c) ?: return@launch
             tag = v; usedCamera = true
-            loadTag { if (product.isBlank()) scanProduct() }
+            // bez automatskog otvaranja kamere za proizvod - korisnik sam klikne skeniranje
+            loadTag { runCatching { productFocus.requestFocus() } }
         }
     }
 
@@ -151,7 +152,7 @@ fun LinkScreen() {
                 runCatching { tagInfo = Api.tag(t) }
                 if (Prefs.continuous) {
                     tag = ""; product = ""; tagInfo = null
-                    if (usedCamera) scanTag() else runCatching { tagFocus.requestFocus() }
+                    runCatching { tagFocus.requestFocus() }
                 }
             }
         }

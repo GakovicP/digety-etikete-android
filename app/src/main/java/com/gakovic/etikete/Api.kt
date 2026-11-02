@@ -122,7 +122,10 @@ object Api {
     // ------------------------------------------------------------------ GraphQL
 
     /** Izvrsava GraphQL upit; ponavlja kod timeout-a / 5xx; vraca "data". */
-    suspend fun gql(query: String, variables: JSONObject = JSONObject()): JSONObject =
+    /** Poslednje GraphQL greske kod delimicnog odgovora (allowPartial). */
+    @Volatile var lastPartialErrors: String? = null
+
+    suspend fun gql(query: String, variables: JSONObject = JSONObject(), allowPartial: Boolean = false): JSONObject =
         withContext(Dispatchers.IO) {
             var tok = token()
             var authRetried = false
@@ -155,8 +158,14 @@ object Api {
                             val msg = (0 until errors.length()).joinToString("; ") {
                                 errors.optJSONObject(it)?.optString("message") ?: errors.opt(it).toString()
                             }
+                            val data = js.optJSONObject("data")
+                            if (allowPartial && data != null) {
+                                lastPartialErrors = msg
+                                return@withContext data
+                            }
                             throw ApiException(msg, notFound = msg.contains("not found", ignoreCase = true))
                         }
+                        if (allowPartial) lastPartialErrors = null
                         if (!r.isSuccessful) throw ApiException("HTTP ${r.code}: ${text.take(200)}")
                         return@withContext js.optJSONObject("data") ?: JSONObject()
                     }
@@ -291,24 +300,124 @@ object Api {
 
     // ------------------------------------------------------------------ alarmi
 
-    suspend fun alarms(store: String, start: String?, type: String?, cursor: String?, limit: Int = 50): Pair<List<JSONObject>, String?> {
+    private const val ALARM_FIELDS = "map start zone zones x y tag_missing type tag { id battery online skus { sku { sku texts { type text } } } }"
+
+    /** Rezultat ucitavanja alarma, sa opisom kako je dobijen (za dijagnostiku). */
+    data class AlarmResult(val items: List<JSONObject>, val next: String?, val info: String)
+
+    private suspend fun alarmsPage(store: String, startDate: String?, type: String?, cursor: String?, limit: Int): Pair<List<JSONObject>, String?> {
         val vars = JSONObject().put("id", store).put("limit", limit)
-        if (start != null) vars.put("start", start)
+        if (startDate != null) vars.put("start", startDate)
         if (type != null) vars.put("type", type)
         if (cursor != null) vars.put("cursor", cursor)
         val st = gql(
             """query(${'$'}id: ID!, ${'$'}start: String, ${'$'}type: String, ${'$'}cursor: String, ${'$'}limit: Int) {
                 store(id: ${'$'}id) {
                     alarmsPaginated(start_date: ${'$'}start, type: ${'$'}type, cursor: ${'$'}cursor, limit: ${'$'}limit) {
-                        items { map start zone zones x y tag_missing type tag { id battery online skus { sku { sku texts { type text } } } } }
+                        items { $ALARM_FIELDS }
                         next_cursor
                     }
                 } }""",
-            vars
+            vars, allowPartial = true
         ).optJSONObject("store")
         val page = st?.optJSONObject("alarmsPaginated") ?: return emptyList<JSONObject>() to null
         val next = page.optString("next_cursor").takeIf { it.isNotEmpty() && it != "null" }
         return (page.optJSONArray("items") ?: JSONArray()).objects() to next
+    }
+
+    private suspend fun alarmsLegacy(store: String, type: String?): List<JSONObject> {
+        val vars = JSONObject().put("id", store)
+        if (type != null) vars.put("type", type)
+        val st = gql(
+            """query(${'$'}id: ID!, ${'$'}type: String) { store(id: ${'$'}id) { alarms(type: ${'$'}type) { $ALARM_FIELDS } } }""",
+            vars, allowPartial = true
+        ).optJSONObject("store")
+        return (st?.optJSONArray("alarms") ?: JSONArray()).objects()
+    }
+
+    /**
+     * Alarmi za poslednjih [days] dana. Format datuma za Digety nije dokumentovan, pa se probaju:
+     * 1) start_date kao dan (yyyy-MM-dd), 2) bez datuma (filtrira telefon), 3) stari "alarms" upit.
+     */
+    suspend fun alarms(store: String, days: Int, type: String?, cursor: String?, limit: Int = 50): AlarmResult {
+        val since = System.currentTimeMillis() - days * 86_400_000L
+        fun keep(list: List<JSONObject>) = list.filter { (parseTime(it.str("start")) ?: Long.MAX_VALUE) >= since }
+            .sortedByDescending { parseTime(it.str("start")) ?: 0L }
+        val notes = mutableListOf<String>()
+
+        val day = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(since))
+        val (byDate, nextByDate) = alarmsPage(store, day, type, cursor, limit)
+        notes += "po datumu: ${byDate.size}"
+        if (byDate.isNotEmpty() || cursor != null) {
+            return AlarmResult(keep(byDate), nextByDate, notes.joinToString(" · ") + partialNote())
+        }
+        val (noDate, nextNoDate) = alarmsPage(store, null, type, null, 100)
+        notes += "bez datuma: ${noDate.size}"
+        if (noDate.isNotEmpty()) {
+            val kept = keep(noDate)
+            notes += "u periodu: ${kept.size}"
+            return AlarmResult(kept, nextNoDate, notes.joinToString(" · ") + partialNote())
+        }
+        val legacy = alarmsLegacy(store, type)
+        notes += "stari upit: ${legacy.size}"
+        val kept = keep(legacy)
+        if (legacy.isNotEmpty()) notes += "u periodu: ${kept.size}"
+        return AlarmResult(kept, null, notes.joinToString(" · ") + partialNote())
+    }
+
+    private fun partialNote(): String = lastPartialErrors?.let { " · upozorenje servera: ${it.take(150)}" } ?: ""
+
+    // ------------------------------------------------------------------ izvestaj iz Digety-ja (sve, ne samo telefon)
+
+    /** Broj vezanih / nevezanih etiketa u prodavnici (state 1 = vezana, 0 = nevezana). */
+    suspend fun inventoryCounts(store: String): JSONObject? = gql(
+        """query(${'$'}id: ID!) { store(id: ${'$'}id) {
+            vezane: inventory_count(state: 1) { online offline }
+            nevezane: inventory_count(state: 0) { online offline }
+        } }""",
+        JSONObject().put("id", store), allowPartial = true
+    ).optJSONObject("store")
+
+    /** Sve etikete prodavnice sa proizvodom (bez obzira odakle su vezane). */
+    suspend fun linkedTags(store: String): List<JSONObject> {
+        val arr = gql(
+            """query(${'$'}store: String) { tags(store: ${'$'}store) {
+                id online battery
+                skus { sku { sku barcodes size color texts { type text } } }
+                items { id department }
+            } }""",
+            JSONObject().put("store", store), allowPartial = true
+        ).optJSONArray("tags") ?: JSONArray()
+        return arr.objects()
+    }
+
+    /** Broj uspesnih promena "etiketa -> proizvod" (vezivanja/odvezivanja) po danu, iz Digety-ja. */
+    suspend fun linkCountsPerDay(store: String, days: Int): List<Pair<String, Int?>> {
+        val f = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        val dates = (0 until days).map { f.format(java.util.Date(System.currentTimeMillis() - it * 86_400_000L)) }
+        val fields = dates.mapIndexed { i, d ->
+            "d$i: update_counter(date: \"$d\", success: true, reason: 1) { update_counter }"
+        }.joinToString("\n")
+        val st = gql("query(${'$'}id: ID!) { store(id: ${'$'}id) { $fields } }", JSONObject().put("id", store), allowPartial = true)
+            .optJSONObject("store")
+        return dates.mapIndexed { i, d ->
+            val o = st?.optJSONObject("d$i")
+            d to (if (o == null || o.isNull("update_counter")) null else o.optInt("update_counter"))
+        }
+    }
+
+    /** Vezivanja jednog dana iz Digety-ja (sve promene etiketa -> proizvod). */
+    suspend fun linkUpdates(store: String, date: String): List<JSONObject> {
+        val st = gql(
+            """query(${'$'}id: ID!, ${'$'}d: String!) { store(id: ${'$'}id) {
+                recent_updates(date: ${'$'}d) { tag_id status_code start_time end_time update_reason
+                    tag { id skus { sku { sku barcodes texts { type text } } } } }
+            } }""",
+            JSONObject().put("id", store).put("d", date), allowPartial = true
+        ).optJSONObject("store")
+        return (st?.optJSONArray("recent_updates") ?: JSONArray()).objects()
+            .filter { it.optInt("update_reason", -1) == 1 }
+            .sortedByDescending { it.str("end_time") ?: it.str("start_time") ?: "" }
     }
 
     // ------------------------------------------------------------------ prijave problema (issues)
@@ -398,4 +507,25 @@ fun JSONObject.tagPrice(): String? {
         ?.optJSONObject("price")?.optJSONArray("prices")?.objects().orEmpty()
     val p = prices.firstOrNull() ?: return null
     return "%.2f %s".format(p.optDouble("price"), p.optString("currency", ""))
+}
+
+/** ISO-8601 ("2026-11-02T09:15:00Z", sa ili bez milisekundi/zone) ili epoch (s / ms) -> millis. */
+fun parseTime(v: String?): Long? {
+    if (v.isNullOrBlank()) return null
+    v.toLongOrNull()?.let { return if (it < 100_000_000_000L) it * 1000 else it }
+    v.toDoubleOrNull()?.let { val l = it.toLong(); return if (l < 100_000_000_000L) l * 1000 else l }
+    val patterns = listOf(
+        "yyyy-MM-dd'T'HH:mm:ss.SSSSSSX", "yyyy-MM-dd'T'HH:mm:ss.SSSX", "yyyy-MM-dd'T'HH:mm:ssX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd",
+    )
+    for (p in patterns) {
+        try {
+            val f = java.text.SimpleDateFormat(p, java.util.Locale.US)
+            if (!p.endsWith("X")) f.timeZone = java.util.TimeZone.getTimeZone("UTC")
+            f.isLenient = false
+            return f.parse(v)?.time ?: continue
+        } catch (_: Exception) {
+        }
+    }
+    return null
 }

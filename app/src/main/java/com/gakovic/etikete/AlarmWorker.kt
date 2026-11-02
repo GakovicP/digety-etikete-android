@@ -43,13 +43,11 @@ class AlarmWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
 
         /** Vraca broj novih alarma (i salje notifikaciju za njih). */
         suspend fun checkNewAlarms(c: Context, store: String): Int {
-            val since = isoDaysAgo(1)
-            val (items, _) = Api.alarms(store, since, null, null, 50)
-            val last = Prefs.lastAlarmSeen
-            val newer = items.filter { a -> last == null || (a.str("start") ?: "") > last }
-                .sortedByDescending { it.str("start") }
-            val newest = items.maxOfOrNull { it.str("start") ?: "" }
-            if (newest != null && (last == null || newest > last)) Prefs.lastAlarmSeen = newest
+            val res = Api.alarms(store, 1, null, null, 50)
+            val last = Prefs.lastAlarmSeen?.toLongOrNull()
+            val newer = res.items.filter { a -> last == null || (parseTime(a.str("start")) ?: 0L) > last }
+            val newest = res.items.maxOfOrNull { parseTime(it.str("start")) ?: 0L }
+            if (newest != null && newest > 0 && (last == null || newest > last)) Prefs.lastAlarmSeen = newest.toString()
             // prvi put samo zapamti stanje, bez gomile notifikacija
             if (last == null) return 0
             if (newer.isNotEmpty()) notify(c, newer)
@@ -100,18 +98,9 @@ fun isoDaysAgo(days: Int): String {
     return f.format(Date(System.currentTimeMillis() - days * 86_400_000L))
 }
 
-/** "2026-11-02T09:15:00Z" -> "02.11. 10:15" (lokalno vreme). */
+/** Vreme iz Digety-ja -> "02.11. 10:15" (lokalno vreme). */
 fun prettyTime(iso: String?): String {
     if (iso.isNullOrEmpty()) return ""
-    val patterns = listOf("yyyy-MM-dd'T'HH:mm:ss.SSSX", "yyyy-MM-dd'T'HH:mm:ssX", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss")
-    for (p in patterns) {
-        try {
-            val f = SimpleDateFormat(p, Locale.US)
-            if (!p.endsWith("X")) f.timeZone = TimeZone.getTimeZone("UTC")
-            val d = f.parse(iso) ?: continue
-            return SimpleDateFormat("dd.MM. HH:mm", Locale.getDefault()).format(d)
-        } catch (_: Exception) {
-        }
-    }
-    return iso.take(16).replace('T', ' ')
+    val t = parseTime(iso) ?: return iso.take(16).replace('T', ' ')
+    return SimpleDateFormat("dd.MM. HH:mm", Locale.getDefault()).format(Date(t))
 }

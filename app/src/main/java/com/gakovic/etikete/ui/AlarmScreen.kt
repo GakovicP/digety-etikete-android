@@ -39,7 +39,6 @@ import com.gakovic.etikete.Api
 import com.gakovic.etikete.Nav
 import com.gakovic.etikete.Prefs
 import com.gakovic.etikete.alarmTypeText
-import com.gakovic.etikete.isoDaysAgo
 import com.gakovic.etikete.prettyTime
 import com.gakovic.etikete.str
 import com.gakovic.etikete.tagProductName
@@ -60,17 +59,19 @@ fun AlarmScreen() {
     var error by remember { mutableStateOf<String?>(null) }
     var live by remember { mutableStateOf(true) }
     var reload by remember { mutableIntStateOf(0) }
+    var info by remember { mutableStateOf<String?>(null) }
 
     suspend fun load(more: Boolean) {
         loading = true; error = null
         try {
             val apiType = if (type == "zone" || type == "cut") type else null
-            val (list, next) = Api.alarms(store, isoDaysAgo(days), apiType, if (more) cursor else null)
-            val filtered = if (type == "missing") list.filter { it.optBoolean("tag_missing") } else list
+            val res = Api.alarms(store, days, apiType, if (more) cursor else null)
+            val filtered = if (type == "missing") res.items.filter { it.optBoolean("tag_missing") } else res.items
             items = if (more) items + filtered else filtered
-            cursor = next
-            items.maxOfOrNull { it.str("start") ?: "" }?.let { newest ->
-                if ((Prefs.lastAlarmSeen ?: "") < newest) Prefs.lastAlarmSeen = newest
+            cursor = res.next
+            info = "Digety: " + res.info
+            items.maxOfOrNull { com.gakovic.etikete.parseTime(it.str("start")) ?: 0L }?.let { newest ->
+                if (newest > (Prefs.lastAlarmSeen?.toLongOrNull() ?: 0L)) Prefs.lastAlarmSeen = newest.toString()
             }
         } catch (e: Exception) {
             error = e.message
@@ -109,10 +110,16 @@ fun AlarmScreen() {
                 Switch(live, { live = it })
             }
             error?.let { Message(it, Err) }
+            info?.let { Text(it, color = Muted, fontSize = 11.sp) }
         }
         LazyColumn(Modifier.fillMaxSize()) {
             if (!loading && items.isEmpty() && error == null) item {
-                Section { Text("Nema alarma u izabranom periodu.", color = Muted) }
+                Section {
+                    Text("Nema alarma u izabranom periodu.", color = Muted)
+                    Text("Ako u Digety dashboard-u vidiš alarme, a ovde ne: proveri da je izabrana ista prodavnica " +
+                        "i da tvoj nalog ima pravo da vidi alarme. Red „Digety: …“ iznad pokazuje šta je server vratio.",
+                        color = Muted, fontSize = 12.sp)
+                }
             }
             items(items) { a -> AlarmItem(a, scope = scope, c = c) }
             if (cursor != null) item {

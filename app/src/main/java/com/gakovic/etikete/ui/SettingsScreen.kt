@@ -164,7 +164,7 @@ fun SettingsScreen() {
                 Spacer(Modifier.width(16.dp))
                 RadioButton(mode == "sku", { mode = "sku"; Prefs.linkMode = "sku" }); Text("SKU / ID")
             }
-            SwitchRow("Neprekidno skeniranje (posle vezivanja odmah sledeća etiketa)", continuous) {
+            SwitchRow("Posle uspešnog vezivanja obriši polja za sledeću etiketu", continuous) {
                 continuous = it; Prefs.continuous = it
             }
             SwitchRow("Beleži GPS lokaciju uz svaku akciju", gps) { gps = it; Prefs.useGps = it }

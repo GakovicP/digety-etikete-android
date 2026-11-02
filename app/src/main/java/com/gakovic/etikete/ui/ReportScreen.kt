@@ -1,5 +1,6 @@
 package com.gakovic.etikete.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -52,20 +53,177 @@ import java.util.Locale
 fun ReportScreen() {
     var sub by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
-        TabRow(selectedTabIndex = sub) {
-            Tab(sub == 0, { sub = 0 }, text = { Text("Vezivanje") })
-            Tab(sub == 1, { sub = 1 }, text = { Text("Baterija") })
-            Tab(sub == 2, { sub = 2 }, text = { Text("Offline") })
+        androidx.compose.material3.ScrollableTabRow(selectedTabIndex = sub, edgePadding = 8.dp) {
+            Tab(sub == 0, { sub = 0 }, text = { Text("Vezano (sve)") })
+            Tab(sub == 1, { sub = 1 }, text = { Text("Sa telefona") })
+            Tab(sub == 2, { sub = 2 }, text = { Text("Baterija") })
+            Tab(sub == 3, { sub = 3 }, text = { Text("Offline") })
         }
         when (sub) {
-            0 -> LinkReport()
-            1 -> BatteryReport()
+            0 -> DigetyLinkReport()
+            1 -> LinkReport()
+            2 -> BatteryReport()
             else -> OfflineReport()
         }
     }
 }
 
 private fun stamp() = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+
+// ---------------------------------------------------------------------- sve vezano u Digety-ju (svi izvori)
+
+@Composable
+private fun DigetyLinkReport() {
+    val c = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val store = Prefs.storeId ?: return
+    var counts by remember { mutableStateOf<JSONObject?>(null) }
+    var perDay by remember { mutableStateOf<List<Pair<String, Int?>>?>(null) }
+    var dayOpen by remember { mutableStateOf<String?>(null) }
+    var dayItems by remember { mutableStateOf<List<JSONObject>?>(null) }
+    var dayLoading by remember { mutableStateOf(false) }
+    var tags by remember { mutableStateOf<List<JSONObject>?>(null) }
+    var tagsLoading by remember { mutableStateOf(false) }
+    var search by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    androidx.compose.runtime.LaunchedEffect(store) {
+        try { counts = Api.inventoryCounts(store) } catch (e: Exception) { error = e.message }
+        try { perDay = Api.linkCountsPerDay(store, 14) } catch (e: Exception) { perDay = emptyList(); error = error ?: e.message }
+    }
+
+    val linked = tags.orEmpty().filter { (it.optJSONArray("skus")?.length() ?: 0) > 0 }
+    fun department(t: JSONObject): String =
+        t.optJSONArray("items")?.optJSONObject(0)?.str("department") ?: "(bez odeljenja)"
+    val q = search.trim()
+    val shown = if (q.isEmpty()) linked else linked.filter { t ->
+        t.optString("id").contains(q, true) || (t.tagSku()?.contains(q, true) == true) ||
+            (t.tagProductName()?.contains(q, true) == true) ||
+            (t.optJSONArray("skus")?.optJSONObject(0)?.optJSONObject("sku")?.optJSONArray("barcodes")?.toString()?.contains(q) == true)
+    }
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Section("Stanje u Digety-ju (sve, bez obzira odakle je vezano)") {
+                error?.let { Message(it, Err) }
+                val cnt = counts
+                if (cnt == null) Loading() else {
+                    val v = cnt.optJSONObject("vezane"); val n = cnt.optJSONObject("nevezane")
+                    val vOn = v?.optInt("online") ?: 0; val vOff = v?.optInt("offline") ?: 0
+                    val nOn = n?.optInt("online") ?: 0; val nOff = n?.optInt("offline") ?: 0
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Stat("${vOn + vOff}", "vezanih etiketa", Ok, Modifier.weight(1f))
+                        Stat("${nOn + nOff}", "nevezanih", Muted, Modifier.weight(1f))
+                    }
+                    Text("Vezane: $vOn online / $vOff offline · nevezane: $nOn online / $nOff offline", color = Muted, fontSize = 12.sp)
+                }
+            }
+        }
+        item {
+            Section("Vezivanja po danima (Digety, svi izvori)") {
+                val pd = perDay
+                when {
+                    pd == null -> Loading()
+                    pd.all { it.second == null } -> Text("Digety nije vratio brojeve po danima za ovaj nalog.", color = Muted, fontSize = 13.sp)
+                    else -> pd.forEach { (d, n) ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                if (dayOpen == d) { dayOpen = null; return@clickable }
+                                dayOpen = d; dayItems = null; dayLoading = true
+                                scope.launch {
+                                    try { dayItems = Api.linkUpdates(store, d) } catch (e: Exception) { toast(c, e.message ?: "Greška"); dayItems = emptyList() }
+                                    finally { dayLoading = false }
+                                }
+                            }.padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(d, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
+                            Text(n?.toString() ?: "-", fontWeight = FontWeight.SemiBold, color = if ((n ?: 0) > 0) Ok else Muted)
+                            Text(if (dayOpen == d) "  ▲" else "  ▼", color = Muted)
+                        }
+                        if (dayOpen == d) {
+                            if (dayLoading) Loading()
+                            dayItems?.let { list ->
+                                if (list.isEmpty()) Text("Nema detalja za ovaj dan.", color = Muted, fontSize = 12.sp)
+                                else {
+                                    OutlinedButton(onClick = { shareText(c, "vezivanja_$d.csv", updatesCsv(list)) }) { Text("CSV za $d (${list.size})") }
+                                    list.take(200).forEach { u ->
+                                        val t = u.optJSONObject("tag")
+                                        Text("${prettyTime(u.str("end_time") ?: u.str("start_time"))} · ${u.optString("tag_id")}", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                                        Text(t?.tagProductName() ?: "(trenutno nevezana)", fontSize = 12.sp,
+                                            color = if (u.optInt("status_code") == 200) androidx.compose.ui.graphics.Color.Unspecified else Err)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Text("Broji uspešne promene „etiketa → proizvod“ (vezivanja i odvezivanja) iz svih izvora: telefon, računar, Digety dashboard.", color = Muted, fontSize = 11.sp)
+            }
+        }
+        item {
+            Section("Sve vezane etikete") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Button(enabled = !tagsLoading, onClick = {
+                        tagsLoading = true; error = null
+                        scope.launch {
+                            try { tags = Api.linkedTags(store) } catch (e: Exception) { error = e.message } finally { tagsLoading = false }
+                        }
+                    }) { Text(if (tags == null) "Učitaj listu" else "Osveži") }
+                    if (linked.isNotEmpty()) OutlinedButton(onClick = { shareText(c, "vezane_etikete_${stamp()}.csv", linkedCsv(linked)) }) { Text("CSV (${linked.size})") }
+                }
+                if (tagsLoading) Loading("Učitavam sve etikete prodavnice…")
+                if (tags != null) {
+                    Text("${linked.size} vezanih od ${tags!!.size} etiketa", color = Muted, fontSize = 13.sp)
+                    val byDep = linked.groupBy { department(it) }.toList().sortedByDescending { it.second.size }
+                    if (byDep.size > 1) byDep.take(15).forEach { (d, l) ->
+                        Row { Text(d, fontSize = 13.sp, modifier = Modifier.weight(1f)); Text("${l.size}", fontSize = 13.sp) }
+                    }
+                    androidx.compose.material3.OutlinedTextField(search, { search = it }, label = { Text("Pretraga: tag, SKU, barkod, naziv") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+        items(shown.take(300)) { t ->
+            Section {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(t.optString("id"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Pill(if (t.optBoolean("online")) "online" else "offline", if (t.optBoolean("online")) Ok else Err)
+                }
+                Text(t.tagProductName() ?: "", fontSize = 13.sp)
+                Text(listOfNotNull(t.tagSku()?.let { "SKU $it" }, department(t)).joinToString(" · "), color = Muted, fontSize = 12.sp)
+            }
+        }
+        if (shown.size > 300) item { Text("Prikazano prvih 300 od ${shown.size} - suzi pretragu ili izvezi CSV.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(12.dp)) }
+    }
+}
+
+private fun linkedCsv(list: List<JSONObject>): String {
+    val sb = StringBuilder("\uFEFFtag;sku;barkod;proizvod;odeljenje;online;baterija\n")
+    list.forEach { t ->
+        val sku = t.optJSONArray("skus")?.optJSONObject(0)?.optJSONObject("sku")
+        val bc = sku?.optJSONArray("barcodes")?.let { a -> (0 until a.length()).joinToString(",") { a.optString(it) } } ?: ""
+        sb.append(listOf(
+            t.optString("id"), t.tagSku() ?: "", bc,
+            "\"" + (t.tagProductName() ?: "").replace("\"", "\"\"") + "\"",
+            t.optJSONArray("items")?.optJSONObject(0)?.str("department") ?: "",
+            if (t.optBoolean("online")) "DA" else "NE", if (t.isNull("battery")) "" else t.optInt("battery").toString()
+        ).joinToString(";")).append('\n')
+    }
+    return sb.toString()
+}
+
+private fun updatesCsv(list: List<JSONObject>): String {
+    val sb = StringBuilder("\uFEFFvreme;tag;status;trenutni_proizvod;sku\n")
+    list.forEach { u ->
+        val t = u.optJSONObject("tag")
+        sb.append(listOf(
+            prettyTime(u.str("end_time") ?: u.str("start_time")), u.optString("tag_id"), u.optInt("status_code").toString(),
+            "\"" + (t?.tagProductName() ?: "").replace("\"", "\"\"") + "\"", t?.tagSku() ?: ""
+        ).joinToString(";")).append('\n')
+    }
+    return sb.toString()
+}
 
 // ---------------------------------------------------------------------- izvestaj o vezivanju (sa telefona)
 
