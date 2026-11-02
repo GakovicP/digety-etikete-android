@@ -123,7 +123,7 @@ fun Root() {
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF1E3A8A), titleContentColor = Color.White
+                    containerColor = Color(0xFF4C4C4E), titleContentColor = Color.White
                 )
             )
         },

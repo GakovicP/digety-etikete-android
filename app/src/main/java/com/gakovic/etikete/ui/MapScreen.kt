@@ -239,7 +239,7 @@ private fun StoreMap() {
                     }
                 }
             )
-            focusInfo?.let { Message(it, if (focusPt != null) BlueLight else Warn) }
+            focusInfo?.let { Message(it, if (focusPt != null) Info else Warn) }
             if (focusId != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     scope.launch {
@@ -302,7 +302,7 @@ private fun StoreMap() {
                             fun py(y: Double) = ((1 - (y - lly) / h) * size.height).toFloat()
                             val label = Paint().apply { textSize = 30f / scale.coerceAtLeast(1f); typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
                             base?.zones?.forEach { z ->
-                                val col = when (z.type) { "alarm" -> Err; "department" -> BlueLight; else -> Muted }
+                                val col = when (z.type) { "alarm" -> Err; "department" -> Info; else -> Muted }
                                 z.polygons.forEach { ring ->
                                     val path = Path()
                                     ring.forEachIndexed { i, (x, y) -> if (i == 0) path.moveTo(px(x), py(y)) else path.lineTo(px(x), py(y)) }
@@ -318,7 +318,7 @@ private fun StoreMap() {
                             // sve etikete: plavo = sveza pozicija (do 5 min), sivo = starija
                             pos.forEach { p ->
                                 val fresh = p.age <= 300
-                                drawCircle(if (fresh) BlueLight else Muted.copy(alpha = 0.6f), radius = (if (fresh) 6f else 4f) / scale, center = Offset(px(p.x), py(p.y)))
+                                drawCircle(if (fresh) Info else Muted.copy(alpha = 0.6f), radius = (if (fresh) 6f else 4f) / scale, center = Offset(px(p.x), py(p.y)))
                             }
                             // etikete u pokretu: zelena putanja + tacka
                             moving.values.forEach { pts ->
@@ -343,7 +343,7 @@ private fun StoreMap() {
                 Column(Modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("● u pokretu  ", color = Ok, fontSize = 12.sp)
-                        Text("● sveža poz.  ", color = BlueLight, fontSize = 12.sp)
+                        Text("● sveža poz.  ", color = Info, fontSize = 12.sp)
                         Text("● starija poz.", color = Muted, fontSize = 12.sp)
                         Spacer(Modifier.weight(1f))
                         OutlinedButton(onClick = { scale = 1f; offset = Offset.Zero }) { Text("Resetuj zum") }

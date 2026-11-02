@@ -45,8 +45,15 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import kotlinx.coroutines.tasks.await
 import java.io.File
 
-val Blue = Color(0xFF1E3A8A)
-val BlueLight = Color(0xFF2563EB)
+// NetPlanet boje (iz logoa)
+val BrandOrange = Color(0xFFF57921)
+val BrandDark = Color(0xFF4C4C4E)
+val BrandGray = Color(0xFF818284)
+val Blue = BrandDark
+// akcenat za dugmad/ikone: malo tamnija narandzasta da beli tekst bude citljiv
+val BlueLight = Color(0xFFD9600F)
+// plava samo za informacije na mapi (da se ne mesa sa narandzastim alarmima)
+val Info = Color(0xFF2563EB)
 val Ok = Color(0xFF15803D)
 val Err = Color(0xFFB91C1C)
 val Warn = Color(0xFFB45309)
@@ -57,7 +64,10 @@ val Bg = Color(0xFFF6F7F9)
 fun AppTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = lightColorScheme(
-            primary = BlueLight, onPrimary = Color.White, secondary = Blue,
+            primary = BlueLight, onPrimary = Color.White,
+            primaryContainer = Color(0xFFFDE3D0), onPrimaryContainer = Color(0xFF5A2600),
+            secondary = BrandDark, onSecondary = Color.White,
+            secondaryContainer = Color(0xFFFDE3D0), onSecondaryContainer = Color(0xFF5A2600),
             background = Bg, surface = Color.White, error = Err,
         ),
         content = content
