@@ -374,6 +374,102 @@ object Api {
         return ProductMatch(v, "barcode", v, null, null, "barkod")
     }
 
+    /** Sve o proizvodu za karticu: podaci, cene, zalihe, etikete, slika etikete. */
+    data class ProductDetails(
+        val sku: String,
+        val itemId: String?,
+        val name: String?,
+        val texts: List<Pair<String, String>>,
+        val size: String?,
+        val color: String?,
+        val amount: String?,
+        val barcodes: List<String>,
+        val prices: List<Pair<String, String>>,
+        val sale: Boolean,
+        val department: String?,
+        val stock: Int?,
+        val tags: List<JSONObject>,
+        val imageUrl: String?,
+        val imageBytes: ByteArray?,
+        val imageNote: String,
+    )
+
+    private val TEXT_LABELS = mapOf("name" to "Naziv", "description" to "Opis", "brand" to "Brend", "category" to "Kategorija")
+
+    suspend fun productDetails(sku: String, store: String?, scannedTag: String?): ProductDetails? {
+        val vars = JSONObject().put("sku", sku)
+        if (store != null) vars.put("store", store).put("storeId", store)
+        val data = gql(
+            """query(${'$'}sku: String!, ${'$'}store: String, ${'$'}storeId: ID!) {
+                itemBySku(sku: ${'$'}sku) {
+                    id department template { default sale }
+                    skus(skus: [${'$'}sku]) { sku barcodes size color amount measurement_unit
+                        texts { type text locale } price { sale prices { type price currency } } }
+                    inventory(store: ${'$'}store) { skus { sku count online } }
+                }
+                tags(sku: ${'$'}sku, store: ${'$'}store) { id online battery current_image }
+                store(id: ${'$'}storeId) { template { default sale } }
+            }""",
+            vars.put("storeId", store ?: ""), allowPartial = true
+        )
+        val item = data.optJSONObject("itemBySku") ?: return null
+        val s = item.optJSONArray("skus")?.objects()?.firstOrNull { it.optString("sku").equals(sku, true) }
+            ?: item.optJSONArray("skus")?.objects()?.firstOrNull() ?: return null
+        val texts = s.optJSONArray("texts")?.objects().orEmpty()
+        val name = texts.firstOrNull { it.optString("type") == "name" }?.str("text") ?: texts.firstOrNull()?.str("text")
+        val priceObj = s.optJSONObject("price")
+        val prices = priceObj?.optJSONArray("prices")?.objects().orEmpty().map {
+            (it.str("type") ?: "cena") to (it.optDouble("price").fmt(2) + " " + it.optString("currency", ""))
+        }
+        val barcodes = s.optJSONArray("barcodes")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty()
+        val stock = item.optJSONArray("inventory")?.objects().orEmpty()
+            .flatMap { it.optJSONArray("skus")?.objects().orEmpty() }
+            .filter { it.optString("sku").equals(s.optString("sku"), true) }
+            .takeIf { it.isNotEmpty() }?.sumOf { it.optInt("count") }
+        val tags = data.optJSONArray("tags")?.objects().orEmpty()
+
+        // slika: 1) etiketa koja vec prikazuje proizvod, 2) Digety prikaz kako ce etiketa izgledati
+        var imageUrl: String? = tags.firstNotNullOfOrNull { it.str("current_image") }
+        var imageBytes: ByteArray? = null
+        var note = if (imageUrl != null) "Trenutni prikaz na etiketi ${tags.first { it.str("current_image") != null }.optString("id")}" else ""
+        if (imageUrl == null) {
+            val tpl = item.optJSONObject("template") ?: data.optJSONObject("store")?.optJSONObject("template")
+            val html = (if (priceObj?.optBoolean("sale") == true) tpl?.str("sale") else null) ?: tpl?.str("default")
+            if (html != null) {
+                runCatching {
+                    val pv = JSONObject().put("html", html).put("sku", s.optString("sku"))
+                    val q = if (scannedTag != null) {
+                        pv.put("tag", scannedTag)
+                        "query(${'$'}html: String!, ${'$'}sku: String!, ${'$'}tag: ID) { renderTemplatePreview(templateHtml: ${'$'}html, sku: ${'$'}sku, tag: ${'$'}tag) }"
+                    } else {
+                        pv.put("res", JSONObject().put("x", 296).put("y", 152)).put("mode", "bwr")
+                        "query(${'$'}html: String!, ${'$'}sku: String!, ${'$'}res: ResolutionInput, ${'$'}mode: String) { renderTemplatePreview(templateHtml: ${'$'}html, sku: ${'$'}sku, resolution: ${'$'}res, colorMode: ${'$'}mode) }"
+                    }
+                    val dataUrl = gql(q, pv).str("renderTemplatePreview")
+                    if (dataUrl != null) {
+                        if (dataUrl.startsWith("data:")) {
+                            imageBytes = decodeBase64(dataUrl.substringAfter(","))
+                        } else imageUrl = dataUrl
+                        note = "Prikaz kako će etiketa izgledati (Digety)"
+                    }
+                }
+            }
+        }
+        if (imageUrl == null && imageBytes == null) note = "Digety nema sliku za ovaj proizvod."
+
+        return ProductDetails(
+            sku = s.optString("sku"), itemId = item.str("id"), name = name,
+            texts = texts.filter { it.optString("type") != "name" }.mapNotNull { t ->
+                t.str("text")?.let { (TEXT_LABELS[t.optString("type")] ?: t.optString("type")) to it }
+            }.distinctBy { it.first }.take(6),
+            size = s.str("size"), color = s.str("color"),
+            amount = s.str("amount")?.let { a -> a + (s.str("measurement_unit")?.let { " $it" } ?: "") },
+            barcodes = barcodes, prices = prices, sale = priceObj?.optBoolean("sale") == true,
+            department = item.str("department"), stock = stock, tags = tags,
+            imageUrl = imageUrl, imageBytes = imageBytes, imageNote = note,
+        )
+    }
+
     /** Etiketa po ID-ju bez obzira na velika/mala slova; vraca tag sa tacnim ID-jem ili null. */
     suspend fun findTag(q: String): JSONObject? {
         var lastErr: ApiException? = null
@@ -624,3 +720,6 @@ fun alarmTypeText(a: JSONObject): String = when {
 
 /** Unos kako je otkucan, VELIKIM i malim slovima (bez duplikata). */
 fun caseVariants(v: String): List<String> = listOf(v, v.uppercase(), v.lowercase()).distinct()
+
+@OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+fun decodeBase64(b64: String): ByteArray? = runCatching { kotlin.io.encoding.Base64.decode(b64.trim()) }.getOrNull()

@@ -69,6 +69,8 @@ fun LinkScreen() {
     var product by remember { mutableStateOf("") }
     var match by remember { mutableStateOf<Api.ProductMatch?>(null) }
     var resolving by remember { mutableStateOf(false) }
+    var details by remember { mutableStateOf<Api.ProductDetails?>(null) }
+    var detailsFor by remember { mutableStateOf<String?>(null) }
     var tagInfo by remember { mutableStateOf<JSONObject?>(null) }
     var tagError by remember { mutableStateOf<String?>(null) }
     var loadingTag by remember { mutableStateOf(false) }
@@ -112,9 +114,28 @@ fun LinkScreen() {
         match?.takeIf { it.query == p }?.let { return it }
         resolving = true
         try {
-            return Api.resolveProduct(p).also { match = it }
+            val m = Api.resolveProduct(p)
+            match = m
+            // kartica proizvoda (podaci + slika etikete)
+            if (m.mode == "sku" && detailsFor != m.key) {
+                details = null
+                detailsFor = m.key
+                details = runCatching { Api.productDetails(m.key, Prefs.storeId, tagInfo?.str("id")) }.getOrNull()
+            } else if (m.mode != "sku") {
+                details = null; detailsFor = null
+            }
+            return m
         } finally {
             resolving = false
+        }
+    }
+
+    fun lookupProduct() {
+        val p = product.trim()
+        if (p.isEmpty()) return
+        scope.launch {
+            runCatching { resolve(p) }
+            if (match?.mode == "sku") buzz() else buzz(error = true)
         }
     }
 
@@ -122,7 +143,7 @@ fun LinkScreen() {
         scope.launch {
             val v = scan() ?: return@launch
             product = v; usedCamera = true; match = null
-            runCatching { resolve(v) }
+            lookupProduct()
         }
     }
 
@@ -184,7 +205,7 @@ fun LinkScreen() {
                 // osvezi prikaz etikete
                 runCatching { tagInfo = Api.tag(realTag) }
                 if (Prefs.continuous) {
-                    tag = ""; product = ""; tagInfo = null; match = null
+                    tag = ""; product = ""; tagInfo = null; match = null; details = null; detailsFor = null
                     runCatching { tagFocus.requestFocus() }
                 }
             }
@@ -213,18 +234,23 @@ fun LinkScreen() {
             }
             ScanField(
                 label = "2. Proizvod (barkod, SKU ili ID)", value = product,
-                onValue = { product = it; if (match?.query != it.trim()) match = null },
+                onValue = { product = it; if (match?.query != it.trim()) { match = null; details = null; detailsFor = null } },
                 onScanClick = { scanProduct() },
-                onDone = { link() },
+                // Enter / rucni skener: prvo prikazi proizvod, vezivanje ide na dugme "Poveži"
+                onDone = { lookupProduct() },
                 focus = productFocus,
             )
             when {
                 resolving -> Text("Tražim proizvod…", color = Muted, fontSize = 13.sp)
+                match != null && match!!.mode == "sku" && details != null -> ProductCard(details!!, match!!.via)
                 match != null && match!!.mode == "sku" -> Message(
                     "✓ " + (match!!.name ?: match!!.key) + " · SKU ${match!!.key}" +
                         (match!!.price?.let { " · $it" } ?: "") + " (pronađen kao ${match!!.via})", Ok
                 )
-                match != null -> Text("Barkod ${match!!.key} - Digety ga proverava pri vezivanju.", color = Muted, fontSize = 13.sp)
+                match != null -> Message(
+                    "Proizvod nije pronađen kao SKU ni ID artikla. Ako je ${match!!.key} barkod, Digety ga proverava tek " +
+                        "pri vezivanju (Digety nema pretragu po barkodu) - posle vezivanja proizvod se vidi na kartici etikete.", Warn
+                )
             }
             Button(
                 onClick = { link() },
@@ -349,5 +375,50 @@ fun SmallAction(text: String, icon: androidx.compose.ui.graphics.vector.ImageVec
         Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(4.dp))
         Text(text, color = color, fontSize = 12.sp, maxLines = 1)
+    }
+}
+
+@Composable
+fun ProductCard(d: Api.ProductDetails, via: String) {
+    Column(
+        Modifier.fillMaxWidth().border(1.dp, Ok.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+            .background(Ok.copy(alpha = 0.04f), RoundedCornerShape(10.dp)).padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text("✓ Pronađen kao $via", color = Ok, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        val img: Any? = d.imageBytes ?: d.imageUrl
+        if (img != null) {
+            Box(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).border(1.dp, Color(0xFFE3E6EA), RoundedCornerShape(8.dp)).padding(6.dp)) {
+                AsyncImage(img, d.name, Modifier.fillMaxWidth().height(150.dp), contentScale = ContentScale.Fit)
+            }
+        }
+        Text(d.imageNote, color = Muted, fontSize = 11.sp)
+        Text(d.name ?: d.sku, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(
+            listOfNotNull("SKU ${d.sku}", d.itemId?.takeIf { it != d.sku }?.let { "ID $it" }, d.size?.let { "vel. $it" }, d.color, d.amount)
+                .joinToString(" · "),
+            fontSize = 13.sp, fontFamily = FontFamily.Monospace
+        )
+        if (d.prices.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                d.prices.forEach { (type, value) ->
+                    Column {
+                        Text(type, color = Muted, fontSize = 11.sp)
+                        Text(value, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    }
+                }
+                if (d.sale) Pill("akcija", Err)
+            }
+        }
+        if (d.barcodes.isNotEmpty()) Text("Barkod: " + d.barcodes.take(4).joinToString(", ") + if (d.barcodes.size > 4) " …" else "", fontSize = 12.sp, color = Muted)
+        val extra = listOfNotNull(d.department?.let { "Odeljenje: $it" }, d.stock?.let { "Zaliha: $it" })
+        if (extra.isNotEmpty()) Text(extra.joinToString(" · "), fontSize = 12.sp, color = Muted)
+        d.texts.forEach { (k, v) -> Text("$k: $v", fontSize = 12.sp, maxLines = 2) }
+        if (d.tags.isEmpty()) Text("Još nije ni na jednoj etiketi u ovoj prodavnici.", fontSize = 12.sp, color = Muted)
+        else Text(
+            "Već na ${d.tags.size} etiket" + (if (d.tags.size == 1) "i" else "a") + ": " +
+                d.tags.take(4).joinToString(", ") { it.optString("id") } + if (d.tags.size > 4) " …" else "",
+            fontSize = 12.sp, color = Warn
+        )
     }
 }
