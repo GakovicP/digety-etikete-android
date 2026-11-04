@@ -1,0 +1,7 @@
+# Shell scripts must keep LF line endings, also when cloned on Windows
+# (CRLF breaks them on macOS: "bad interpreter: /bin/bash^M").
+*.sh      text eol=lf
+gradlew   text eol=lf
+*.bat     text eol=crlf
+*.yml     text eol=lf
+*.xcconfig text eol=lf
