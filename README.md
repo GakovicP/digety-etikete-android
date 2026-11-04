@@ -27,12 +27,16 @@ Svaki `push` na `main` pokreće GitHub Actions (*Build Android + iOS*) i pravi *
 - **Appetize.io** — otvori nalog, *Upload* → izaberi `...-iOS-simulator.zip` → aplikacija radi u browseru kao iPhone. Kamera/GPS su simulirani (barkod se može ukucati ručno).
 - **Mac sa Xcode-om** — raspakuj zip, pokreni simulator i prevuci `NetPlanetLink.app` na njega.
 
-**Na pravom iPhone-u (potreban Apple Developer nalog, 99 USD/god.):**
-TestFlight — build se potpisuje i šalje u App Store Connect, testeri dobiju pozivnicu i instaliraju preko TestFlight aplikacije. Za to u repo treba dodati sertifikat i API ključ kao GitHub Secrets (posle otvaranja naloga).
+**Na pravom iPhone-u (besplatan Apple ID, bez plaćenog naloga):**
+- **Mac + Xcode:** `./setup-iphone.sh`, pa u Xcode-u izaberi svoj iPhone i Run. Važi 7 dana, posle samo ponovo Run.
+- **Sideloadly/AltStore (Mac ili Windows):** `...-iPhone-unsigned.ipa` iz Release-a, potpiše se tvojim Apple ID-jem.
+- Detaljno uputstvo: [docs/iPhone-install.md](docs/iPhone-install.md).
+
+TestFlight / App Store i dalje traže Apple Developer nalog (99 USD/god.).
 
 ## Lokalni razvoj
 - Android: otvori folder u Android Studiju, pokreni `composeApp`.
-- iOS (Mac): `./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64`, pa `cd iosApp && xcodegen generate` i otvori `iosApp.xcodeproj` (postavi `KMP_FRAMEWORK_DIR` na `composeApp/build/bin/iosSimulatorArm64/debugFramework`).
+- iOS (Mac): `./setup-iphone.sh` (napravi `iosApp/iosApp.xcodeproj`); Xcode sam gradi Kotlin framework za izabrani uređaj ili simulator (faza *Build Kotlin framework*).
 
 ## Napomene
 - Prijava: Cognito `USER_PASSWORD_AUTH`, čuva se samo refresh token (lozinka se ne pamti).
