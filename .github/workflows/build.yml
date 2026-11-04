@@ -54,7 +54,7 @@ jobs:
           xcodebuild -project iosApp.xcodeproj -scheme iosApp -configuration Debug \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
-            KMP_FRAMEWORK_DIR="$GITHUB_WORKSPACE/composeApp/build/bin/iosSimulatorArm64/debugFramework" \
+            KMP_PREBUILT=YES KMP_FRAMEWORK_DIR="$GITHUB_WORKSPACE/composeApp/build/bin/iosSimulatorArm64/debugFramework" \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} MARKETING_VERSION=1.1.${{ github.run_number }} \
             build | tail -200
           test -d build/Build/Products/Debug-iphonesimulator/NetPlanetLink.app
@@ -73,7 +73,7 @@ jobs:
           xcrun simctl io "$DEV" screenshot shots/ios.png
           xcrun simctl spawn "$DEV" log show --last 2m --predicate 'process == "NetPlanetLink"' --style compact | tail -60 > shots/ios-log.txt || true
       - name: Objavi snimke (Release test-screens)
-        if: always()
+        if: always() && github.ref == 'refs/heads/main'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -98,6 +98,45 @@ jobs:
         with:
           name: ios-simulator-app
           path: out/*.zip
+
+  # Real iPhone build (arm64, iphoneos), NOT signed. It goes through the same
+  # Xcode "Build Kotlin framework" phase you use locally, so it also checks that path.
+  # The .ipa can be installed with a free Apple ID using Sideloadly or AltStore
+  # (they re-sign it with your account; valid 7 days). See docs/iPhone-install.md.
+  ios-device:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Xcode projekat
+        run: |
+          brew install xcodegen
+          cd iosApp && xcodegen generate
+      - name: Build iOS (iPhone, unsigned)
+        run: |
+          # Simulate a Mac with only an empty Android SDK folder (like the brew command-line tools)
+          mkdir -p "$RUNNER_TEMP/empty-android-sdk"
+          export ANDROID_HOME="$RUNNER_TEMP/empty-android-sdk" ANDROID_SDK_ROOT="$RUNNER_TEMP/empty-android-sdk"
+          cd iosApp
+          xcodebuild -project iosApp.xcodeproj -scheme iosApp -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} MARKETING_VERSION=1.1.${{ github.run_number }} \
+            build | tail -200
+          test -d build/Build/Products/Release-iphoneos/NetPlanetLink.app
+      - name: Pack unsigned .ipa
+        run: |
+          mkdir -p out ipa/Payload
+          cp -R iosApp/build/Build/Products/Release-iphoneos/NetPlanetLink.app ipa/Payload/
+          lipo -info ipa/Payload/NetPlanetLink.app/NetPlanetLink
+          cd ipa && zip -qry "$GITHUB_WORKSPACE/out/NetPlanet-link-1.1.${{ github.run_number }}-iPhone-unsigned.ipa" Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-device-ipa
+          path: out/*.ipa
 
   android-test:
     needs: android
@@ -127,7 +166,7 @@ jobs:
             adb exec-out screencap -p > shots/android.png
             adb logcat -d -t 300 | grep -iE "etikete|AndroidRuntime|FATAL" > shots/android-log.txt || true
       - name: Objavi snimke (Release test-screens)
-        if: always()
+        if: always() && github.ref == 'refs/heads/main'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -145,7 +184,8 @@ jobs:
           if-no-files-found: ignore
 
   release:
-    needs: [android, ios]
+    needs: [android, ios, ios-device]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -156,6 +196,10 @@ jobs:
         with:
           name: ios-simulator-app
           path: out
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-device-ipa
+          path: out
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
@@ -164,6 +208,7 @@ jobs:
           body: |
             Automatski build iz commit-a ${{ github.sha }}.
             - **Android:** preuzmi .apk i instaliraj na telefon.
-            - **iOS (simulator):** .zip sa NetPlanetLink.app - za iPhone simulator na Mac-u ili za testiranje u browseru (Appetize.io). Za pravi iPhone treba Apple Developer nalog (TestFlight).
+            - **iOS (simulator):** .zip sa NetPlanetLink.app - za iPhone simulator na Mac-u ili za testiranje u browseru (Appetize.io).
+            - **iOS (pravi iPhone):** `-iPhone-unsigned.ipa` - instalira se besplatnim Apple ID-jem preko Sideloadly/AltStore (važi 7 dana). Ili iz Xcode-a, vidi docs/iPhone-install.md.
           files: out/*
           make_latest: true

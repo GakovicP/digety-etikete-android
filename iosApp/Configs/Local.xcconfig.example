@@ -1,0 +1,9 @@
+// Copy to Local.xcconfig (git-ignored) and fill in. ../setup-iphone.sh does this for you.
+
+// Your Team ID: Xcode > Settings > Accounts > your Apple ID > Personal Team.
+// It is the 10-character code, e.g. AB12CD34EF.
+DEVELOPMENT_TEAM = AB12CD34EF
+
+// Only change this if Xcode says the bundle id "is not available" / already taken.
+// A free account needs an id nobody else has registered, e.g.:
+// PRODUCT_BUNDLE_IDENTIFIER = com.yourname.netplanetlink
