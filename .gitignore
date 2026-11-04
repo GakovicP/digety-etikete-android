@@ -10,3 +10,5 @@ iosApp/*.xcodeproj/
 iosApp/iosApp/Info.plist
 xcuserdata/
 .kotlin/
+iosApp/Configs/Local.xcconfig
+*.ipa

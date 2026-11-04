@@ -14,6 +14,41 @@ targets:
     scheme: {}
     sources:
       - iosApp
+    configFiles:
+      Debug: Configs/App.xcconfig
+      Release: Configs/App.xcconfig
+    preBuildScripts:
+      - name: Build Kotlin framework
+        basedOnDependencyAnalysis: false
+        script: |
+          # Builds the shared Kotlin/Compose code (ComposeApp.framework) for the
+          # destination you picked in Xcode: a real iPhone (iosArm64) or a simulator.
+          set -e
+          if [ "$KMP_PREBUILT" = "YES" ]; then
+            echo "KMP_PREBUILT=YES - using the framework in $KMP_FRAMEWORK_DIR"
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          # Xcode does not load your shell profile: find a JDK 17 (or 21) here.
+          if [ -z "$JAVA_HOME" ] && [ -x /usr/libexec/java_home ]; then
+            JAVA_HOME="$(/usr/libexec/java_home -v 17 2>/dev/null || /usr/libexec/java_home -v 21 2>/dev/null || true)"
+            export JAVA_HOME
+          fi
+          if [ -z "$JAVA_HOME" ]; then
+            echo "error: JDK 17 not found. Install it (brew install --cask temurin@17) and build again."
+            exit 1
+          fi
+          # The Gradle project also has an Android target, so Gradle needs an Android SDK folder.
+          if [ -z "$ANDROID_HOME" ] && ! grep -qs '^sdk.dir' local.properties; then
+            for d in "$HOME/Library/Android/sdk" /opt/homebrew/share/android-commandlinetools /usr/local/share/android-commandlinetools; do
+              if [ -d "$d" ]; then export ANDROID_HOME="$d"; break; fi
+            done
+          fi
+          if [ -z "$ANDROID_HOME" ] && ! grep -qs '^sdk.dir' local.properties; then
+            echo "error: Android SDK not found. Install it once: brew install --cask android-commandlinetools (see docs/iPhone-install.md)."
+            exit 1
+          fi
+          ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode
     info:
       path: iosApp/Info.plist
       properties:
@@ -30,10 +65,10 @@ targets:
         NSPhotoLibraryUsageDescription: "Izbor fotografije za prijavu problema."
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.gakovic.etikete
         PRODUCT_NAME: NetPlanetLink
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        # Kotlin framework (ComposeApp) - putanju zadaje build skripta / CI preko KMP_FRAMEWORK_DIR
+        # Kotlin framework (ComposeApp): KMP_FRAMEWORK_DIR comes from Configs/App.xcconfig
+        # (CI may override it on the xcodebuild command line together with KMP_PREBUILT=YES)
         FRAMEWORK_SEARCH_PATHS: ["$(inherited)", "$(KMP_FRAMEWORK_DIR)"]
         OTHER_LDFLAGS: ["$(inherited)", "-framework", "ComposeApp"]
         ENABLE_USER_SCRIPT_SANDBOXING: NO

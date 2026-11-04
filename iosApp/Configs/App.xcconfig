@@ -1,0 +1,18 @@
+// Build settings for the NetPlanetLink iOS app (used by project.yml / XcodeGen).
+//
+// Signing works with a FREE Apple ID ("Personal Team"): automatic signing,
+// no paid capabilities (no push, iCloud, App Groups...).
+// Put your own Team ID (and, if needed, a different bundle id) in
+// Local.xcconfig next to this file - it is git-ignored. See Local.xcconfig.example
+// or just run ../setup-iphone.sh, which creates it for you.
+
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+PRODUCT_BUNDLE_IDENTIFIER = com.gakovic.etikete
+
+// Where Xcode looks for the Kotlin framework (ComposeApp.framework).
+// The "Build Kotlin framework" build phase puts it here for the current
+// configuration (Debug/Release) and SDK (iphoneos = real iPhone, iphonesimulator).
+KMP_FRAMEWORK_DIR = $(SRCROOT)/../composeApp/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)
+
+#include? "Local.xcconfig"
