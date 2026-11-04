@@ -7,12 +7,23 @@
 set -e
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
+# A copy made on Windows may have CRLF line endings / lost the executable bit
+for f in gradlew; do
+  if grep -q $'\r' "$f" 2>/dev/null; then sed -i '' $'s/\r$//' "$f"; fi
+  chmod +x "$f"
+done
 
 need() { command -v "$1" >/dev/null 2>&1; }
 
 echo "== Checking tools"
 if ! need xcodebuild || ! xcode-select -p >/dev/null 2>&1; then
   echo "Xcode is missing. Install it from the Mac App Store, open it once, then run this again."; exit 1
+fi
+# Homebrew may be installed but not on PATH yet (fresh install)
+if ! need brew; then
+  for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [ -x "$b" ]; then eval "$("$b" shellenv)"; break; fi
+  done
 fi
 if ! need brew; then
   echo "Homebrew is missing. Install it from https://brew.sh, then run this again."; exit 1
